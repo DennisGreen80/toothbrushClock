@@ -211,10 +211,11 @@ lv_obj_t *s_settings_scr = nullptr;
 lv_obj_t *s_set_digits = nullptr;
 lv_obj_t *s_mode_label = nullptr;
 lv_obj_t *s_sound_label = nullptr;
+lv_obj_t *s_bright_label = nullptr;
 int s_set_hour = 0;
 int s_set_minute = 0;
 bool s_time_changed = false;
-UiSettings s_set_values = {false, true, BRUSH_LANG_EN, CLOCK_FACE_CLASSIC};
+UiSettings s_set_values = {false, true, BRUSH_LANG_EN, CLOCK_FACE_CLASSIC, 100};
 lv_obj_t *s_set_title = nullptr;
 lv_obj_t *s_lang_label = nullptr;
 lv_obj_t *s_face_label = nullptr;
@@ -241,6 +242,32 @@ void set_visible(lv_obj_t *obj, bool visible)
         } else {
             lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+}
+
+// Setting a style property always invalidates the object, even if the value is unchanged. These are
+// called on every UI update, and the seconds ring covers the whole screen, so only set real changes.
+void set_text_color(lv_obj_t *obj, lv_color_t color)
+{
+    if (lv_color_to16(lv_obj_get_style_text_color(obj, LV_PART_MAIN)) != lv_color_to16(color)) {
+        lv_obj_set_style_text_color(obj, color, 0);
+    }
+}
+
+void set_text_opa(lv_obj_t *obj, lv_opa_t opa)
+{
+    if (lv_obj_get_style_text_opa(obj, LV_PART_MAIN) != opa) {
+        lv_obj_set_style_text_opa(obj, opa, 0);
+    }
+}
+
+void set_arc_style(lv_obj_t *obj, lv_part_t part, lv_color_t color, lv_opa_t opa)
+{
+    if (lv_color_to16(lv_obj_get_style_arc_color(obj, part)) != lv_color_to16(color)) {
+        lv_obj_set_style_arc_color(obj, color, part);
+    }
+    if (lv_obj_get_style_arc_opa(obj, part) != opa) {
+        lv_obj_set_style_arc_opa(obj, opa, part);
     }
 }
 
@@ -276,7 +303,7 @@ lv_obj_t *make_arc(lv_obj_t *parent)
 // Taps and swipes on the idle clock are told apart on release by how far the finger moved, so a
 // slow swipe never falls through as a tap (which would start a timer).
 constexpr lv_coord_t TAP_SLOP = 24;  // max movement for a tap or long press
-constexpr lv_coord_t SWIPE_MIN = 50; // min horizontal travel for a swipe
+constexpr lv_coord_t SWIPE_MIN = 40; // min horizontal travel for a swipe
 lv_point_t s_press_start = {0, 0};
 bool s_press_moved = false, s_press_long = false;
 
@@ -313,7 +340,7 @@ void idle_event_cb(lv_event_t *e)
     if (s_press_long || s_core->count != 0) {
         return;
     }
-    if (LV_ABS(dx) >= SWIPE_MIN && LV_ABS(dx) > LV_ABS(dy) * 3 / 2) {
+    if (LV_ABS(dx) >= SWIPE_MIN && LV_ABS(dx) > LV_ABS(dy)) {
         app_change_clock_face(dx < 0);
     } else if (!s_press_moved) {
         app_start_timer();
@@ -1231,21 +1258,18 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
     };
     const lv_color_t clock_color = lv_color_mix(themed(&FacePalette::clock), lv_color_hex(COLOR_MUTED), opa);
     seg_set_color(s_clock, lv_color_mix(clock_color, accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)));
-    lv_obj_set_style_text_color(s_date,
-        lv_color_mix(themed(&FacePalette::date), accent, (lv_opa_t)(LV_OPA_COVER - (uint16_t)saver_opa * 3 / 8)), 0);
-    lv_obj_set_style_text_opa(s_date, opa, 0);
+    set_text_color(s_date,
+        lv_color_mix(themed(&FacePalette::date), accent, (lv_opa_t)(LV_OPA_COVER - (uint16_t)saver_opa * 3 / 8)));
+    set_text_opa(s_date, opa);
     const lv_opa_t hint_opa = theme_opa;
     const lv_color_t hint_color = themed(&FacePalette::hint);
-    lv_obj_set_style_text_opa(s_hint, hint_opa, 0);
-    lv_obj_set_style_text_color(s_hint, hint_color, 0);
-    lv_obj_set_style_text_opa(s_gear_icon, hint_opa, 0);
-    lv_obj_set_style_text_color(s_gear_icon, hint_color, 0);
-    lv_obj_set_style_arc_color(s_seconds_arc, themed(&FacePalette::track), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_seconds_arc,
-        lv_color_mix(themed(&FacePalette::ring), accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)),
-        LV_PART_INDICATOR);
-    lv_obj_set_style_arc_opa(s_seconds_arc, ring_alpha, LV_PART_MAIN);
-    lv_obj_set_style_arc_opa(s_seconds_arc, ring_alpha, LV_PART_INDICATOR);
+    set_text_opa(s_hint, hint_opa);
+    set_text_color(s_hint, hint_color);
+    set_text_opa(s_gear_icon, hint_opa);
+    set_text_color(s_gear_icon, hint_color);
+    set_arc_style(s_seconds_arc, LV_PART_MAIN, themed(&FacePalette::track), ring_alpha);
+    set_arc_style(s_seconds_arc, LV_PART_INDICATOR,
+                  lv_color_mix(themed(&FacePalette::ring), accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)), ring_alpha);
     const bool visible = opa > LV_OPA_MIN;
     set_visible(s_date, visible);
     set_visible(s_hint, visible && hint_opa > LV_OPA_MIN);
@@ -1787,10 +1811,11 @@ void refresh_settings()
     snprintf(buf, sizeof(buf), "%02d:%02d", s_set_hour, s_set_minute);
     seg_set_text(s_set_digits, buf);
     lv_label_set_text(s_set_title, t->settings);
-    lv_label_set_text_fmt(s_mode_label, "%s  %s", s_set_values.count_up ? LV_SYMBOL_UP : LV_SYMBOL_DOWN,
+    lv_label_set_text_fmt(s_mode_label, "%s %s", s_set_values.count_up ? LV_SYMBOL_UP : LV_SYMBOL_DOWN,
                           s_set_values.count_up ? t->count_up : t->countdown);
-    lv_label_set_text_fmt(s_sound_label, "%s  %s", s_set_values.sound ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE,
+    lv_label_set_text_fmt(s_sound_label, "%s %s", s_set_values.sound ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE,
                           s_set_values.sound ? t->sound : t->muted);
+    lv_label_set_text_fmt(s_bright_label, "%s %d%%", LV_SYMBOL_EYE_OPEN, s_set_values.brightness);
     lv_label_set_text(s_lang_label, t->language);
     const char *face = s_set_values.clock_face == CLOCK_FACE_CANDY ? t->candy
                      : s_set_values.clock_face == CLOCK_FACE_HEART ? t->heart
@@ -1804,7 +1829,7 @@ void refresh_settings()
 }
 
 enum SettingsAction : intptr_t {
-    HOUR_UP, HOUR_DOWN, MIN_UP, MIN_DOWN, TOGGLE_MODE, TOGGLE_SOUND, TOGGLE_FACE, TOGGLE_LANG, DONE,
+    HOUR_UP, HOUR_DOWN, MIN_UP, MIN_DOWN, TOGGLE_MODE, TOGGLE_SOUND, TOGGLE_BRIGHTNESS, TOGGLE_FACE, TOGGLE_LANG, DONE,
 };
 
 void settings_event_cb(lv_event_t *e)
@@ -1817,6 +1842,10 @@ void settings_event_cb(lv_event_t *e)
     case MIN_DOWN: s_set_minute = (s_set_minute + 59) % 60; s_time_changed = true; break;
     case TOGGLE_MODE: s_set_values.count_up = !s_set_values.count_up; break;
     case TOGGLE_SOUND: s_set_values.sound = !s_set_values.sound; break;
+    case TOGGLE_BRIGHTNESS:
+        s_set_values.brightness = s_set_values.brightness >= 100 ? 25 : (uint8_t)(s_set_values.brightness / 25 * 25 + 25);
+        app_preview_brightness(s_set_values.brightness);
+        break;
     case TOGGLE_FACE:
         s_set_values.clock_face = static_cast<ClockFace>((s_set_values.clock_face + 1) % CLOCK_FACE_COUNT);
         break;
@@ -1882,15 +1911,21 @@ void build_settings()
         lv_obj_center(make_label(btn, &tb_font_20, COLOR_TEXT, a.symbol));
     }
 
-    lv_obj_t *mode = make_button(s_settings_scr, 168, 44, COLOR_SURFACE, TOGGLE_MODE, false);
-    lv_obj_set_pos(mode, 240 - 8 - 168, 286);
+    // Mode | sound | brightness share one row.
+    lv_obj_t *mode = make_button(s_settings_scr, 140, 44, COLOR_SURFACE, TOGGLE_MODE, false);
+    lv_obj_set_pos(mode, 44, 286);
     s_mode_label = make_label(mode, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_mode_label);
 
-    lv_obj_t *sound = make_button(s_settings_scr, 168, 44, COLOR_SURFACE, TOGGLE_SOUND, false);
-    lv_obj_set_pos(sound, 240 + 8, 286);
+    lv_obj_t *sound = make_button(s_settings_scr, 128, 44, COLOR_SURFACE, TOGGLE_SOUND, false);
+    lv_obj_set_pos(sound, 192, 286);
     s_sound_label = make_label(sound, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_sound_label);
+
+    lv_obj_t *bright = make_button(s_settings_scr, 108, 44, COLOR_SURFACE, TOGGLE_BRIGHTNESS, false);
+    lv_obj_set_pos(bright, 328, 286);
+    s_bright_label = make_label(bright, &tb_font_20, COLOR_TEXT, "");
+    lv_obj_center(s_bright_label);
 
     lv_obj_t *face = make_button(s_settings_scr, 252, 44, COLOR_SURFACE, TOGGLE_FACE, false);
     lv_obj_set_pos(face, 114, 338);

@@ -1192,8 +1192,9 @@
     { id: 'hourDown', x: 182 - 36, y: 252 - 22, w: 72, h: 44 },
     { id: 'minUp', x: 298 - 36, y: 108 - 22, w: 72, h: 44 },
     { id: 'minDown', x: 298 - 36, y: 252 - 22, w: 72, h: 44 },
-    { id: 'mode', x: 64, y: 286, w: 168, h: 44 },
-    { id: 'sound', x: 248, y: 286, w: 168, h: 44 },
+    { id: 'mode', x: 44, y: 286, w: 140, h: 44 },
+    { id: 'sound', x: 192, y: 286, w: 128, h: 44 },
+    { id: 'bright', x: 328, y: 286, w: 108, h: 44 },
     { id: 'face', x: 114, y: 338, w: 252, h: 44 },
     { id: 'lang', x: 114, y: 390, w: 118, h: 44 },
     { id: 'done', x: 248, y: 390, w: 118, h: 44 },
@@ -1209,8 +1210,9 @@
       const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
       if (b.id.endsWith('Up')) s += chevron(cx, cy, true, COLOR_TEXT);
       else if (b.id.endsWith('Down')) s += chevron(cx, cy, false, COLOR_TEXT);
-      else if (b.id === 'mode') s += text(cx, cy, 20, COLOR_TEXT, st.countUp ? `\u2191  ${txt.countUp}` : `\u2193  ${txt.countdown}`);
-      else if (b.id === 'sound') s += text(cx, cy, 20, COLOR_TEXT, st.sound ? `\u266A  ${txt.sound}` : `\u00D7  ${txt.muted}`);
+      else if (b.id === 'mode') s += text(cx, cy, 20, COLOR_TEXT, st.countUp ? `\u2191 ${txt.countUp}` : `\u2193 ${txt.countdown}`);
+      else if (b.id === 'sound') s += text(cx, cy, 20, COLOR_TEXT, st.sound ? `\u266A ${txt.sound}` : `\u00D7 ${txt.muted}`);
+      else if (b.id === 'bright') s += text(cx, cy, 20, COLOR_TEXT, `\u25D0 ${st.brightness || 100}%`);
       else if (b.id === 'face') s += text(cx, cy, 20, COLOR_TEXT, `${txt.face}: ${faceName(st.clockFace, txt)}`);
       else if (b.id === 'lang') s += text(cx, cy, 20, COLOR_TEXT, txt.language);
       else s += text(cx, cy, 20, '#FFFFFF', txt.ok);

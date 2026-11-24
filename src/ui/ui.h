@@ -24,6 +24,7 @@ struct UiSettings {
     bool sound;
     brush_lang_t lang;
     ClockFace clock_face;
+    uint8_t brightness; // percent of the normal backlight levels: 25, 50, 75 or 100
 };
 
 void ui_init(brush_core_t *core, uint32_t now_ms);
@@ -41,4 +42,6 @@ void app_timer_tapped(int index);
 void app_timer_long_pressed(int index);
 void app_open_settings();
 void app_change_clock_face(bool next);
+// Applies a brightness (percent) right away while it is being chosen in settings.
+void app_preview_brightness(uint8_t percent);
 void app_settings_done(int hour, int minute, bool time_changed, const UiSettings &settings);

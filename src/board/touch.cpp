@@ -16,6 +16,9 @@ bool s_present = false;
 bool s_last_pressed = false;
 uint16_t s_last_x = 0;
 uint16_t s_last_y = 0;
+uint8_t s_empty_samples = 0;
+// A single empty sample mid-swipe would end the gesture early; require this many in a row.
+constexpr uint8_t RELEASE_SAMPLES = 2;
 
 bool read_regs(uint16_t reg, uint8_t *buf, uint8_t len)
 {
@@ -73,11 +76,8 @@ bool touch_read(uint16_t *x, uint16_t *y)
         return false;
     }
     uint8_t status = 0;
-    if (!read_regs(REG_STATUS, &status, 1)) {
-        return false;
-    }
-    if (!(status & 0x80)) {
-        // No new sample yet: report the previous state so a held finger stays pressed.
+    if (!read_regs(REG_STATUS, &status, 1) || !(status & 0x80)) {
+        // Bus hiccup or no new sample yet: report the previous state so a held finger stays pressed.
         *x = s_last_x;
         *y = s_last_y;
         return s_last_pressed;
@@ -91,9 +91,16 @@ bool touch_read(uint16_t *x, uint16_t *y)
             s_last_x = (uint16_t)(p[0] | (p[1] << 8));
             s_last_y = (uint16_t)(p[2] | (p[3] << 8));
             pressed = true;
+        } else {
+            pressed = s_last_pressed;
         }
     }
     write_reg(REG_STATUS, 0); // acknowledge the sample
+    if (pressed) {
+        s_empty_samples = 0;
+    } else if (s_last_pressed && ++s_empty_samples < RELEASE_SAMPLES) {
+        pressed = true;
+    }
     s_last_pressed = pressed;
     *x = s_last_x;
     *y = s_last_y;

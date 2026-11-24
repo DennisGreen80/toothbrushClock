@@ -43,7 +43,7 @@ constexpr int DRAW_BUF_LINES = 40;
 brush_core_t s_core;
 oralb_tracker_t s_oralb;
 Preferences s_prefs;
-UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC};
+UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC, 100};
 
 uint32_t s_last_activity_ms = 0;
 uint8_t s_brightness = 0;
@@ -189,6 +189,8 @@ void load_settings()
     s_settings.lang = lang < BRUSH_LANG_COUNT ? (brush_lang_t)lang : DEFAULT_LANG;
     const uint8_t face = s_prefs.getUChar("clock_face", CLOCK_FACE_CLASSIC);
     s_settings.clock_face = face < CLOCK_FACE_COUNT ? static_cast<ClockFace>(face) : CLOCK_FACE_CLASSIC;
+    const uint8_t brightness = s_prefs.getUChar("brightness", 100);
+    s_settings.brightness = brightness >= 25 && brightness <= 100 ? brightness : 100;
 }
 
 void save_settings()
@@ -197,6 +199,7 @@ void save_settings()
     s_prefs.putBool("sound", s_settings.sound);
     s_prefs.putUChar("lang", (uint8_t)s_settings.lang);
     s_prefs.putUChar("clock_face", s_settings.clock_face);
+    s_prefs.putUChar("brightness", s_settings.brightness);
 }
 
 // Eases the backlight towards its target 1 % at a time (smooth wake/dim, fade-in on boot).
@@ -205,7 +208,7 @@ bool screensaver_active(uint32_t now_ms)
     return s_core.count == 0 && now_ms - s_last_activity_ms >= SCREENSAVER_AFTER_MS;
 }
 
-uint8_t backlight_target(uint32_t now_ms)
+uint8_t backlight_level(uint32_t now_ms)
 {
     if (s_core.count != 0) {
         return BRIGHTNESS_ACTIVE;
@@ -215,6 +218,12 @@ uint8_t backlight_target(uint32_t now_ms)
         return BRIGHTNESS_SCREENSAVER;
     }
     return idle_ms >= DIM_AFTER_MS ? BRIGHTNESS_IDLE : BRIGHTNESS_ACTIVE;
+}
+
+// The brightness setting scales every level, so dimming and the screensaver keep their proportions.
+uint8_t backlight_target(uint32_t now_ms)
+{
+    return (uint8_t)LV_MAX(1, backlight_level(now_ms) * s_settings.brightness / 100);
 }
 
 void update_backlight(uint32_t now_ms)
@@ -315,6 +324,11 @@ void app_change_clock_face(bool next)
     const int step = next ? 1 : CLOCK_FACE_COUNT - 1;
     s_settings.clock_face = static_cast<ClockFace>((s_settings.clock_face + step) % CLOCK_FACE_COUNT);
     save_settings();
+}
+
+void app_preview_brightness(uint8_t percent)
+{
+    s_settings.brightness = percent; // saved together with the rest when settings close
 }
 
 void app_settings_done(int hour, int minute, bool time_changed, const UiSettings &settings)
