@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Toothbrush timer – device preview</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: flex; flex-wrap: wrap; gap: 40px; align-items: center; justify-content: center;
+         background: #0d0d0f; color: #c8c8cc; font: 14px/1.5 'Segoe UI', Helvetica, Arial, sans-serif; }
+  #device { user-select: none; cursor: pointer; filter: drop-shadow(0 20px 40px rgba(0,0,0,.6)); }
+  #device svg { display: block; }
+  aside { width: 300px; }
+  h1 { font-size: 18px; color: #fff; margin: 0 0 12px; }
+  label { display: block; margin: 8px 0; }
+  button { background: #1c1c1e; color: #ececec; border: 1px solid #3a3a3c; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: #2c2c2e; }
+  button:disabled { opacity: .5; cursor: default; }
+  ul { padding-left: 18px; }
+  #log { height: 150px; overflow-y: auto; background: #151517; border-radius: 8px; padding: 8px; font-family: Consolas, monospace; font-size: 12px; }
+  kbd { background: #222; border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div id="device"></div>
+<aside>
+  <h1>Toothbrush timer simulator</h1>
+  <ul>
+    <li><b>Tap</b> the clock to start a timer; <b>hold</b> it to open settings</li>
+    <li><b>Tap</b> a ring to pause/resume (or dismiss when done)</li>
+    <li><b>Hold</b> a ring to cancel it</li>
+    <li><b>+</b> adds another timer (up to 4)</li>
+  </ul>
+  <h1>Oral-B brushes (simulated BLE)</h1>
+  <div id="brushes"></div>
+  <p style="font-size:12px;color:#8e8e93">Switching a brush on starts a toothbrush timer. Off pauses it; it ends if the brush
+    stays off for 30 s. Tapping a toothbrush ring does nothing (the brush button controls it); hold to dismiss.</p>
+  <label>Speed
+    <select id="speed"><option value="1">1×</option><option value="5">5×</option><option value="20" selected>20×</option></select>
+  </label>
+  <label><input type="checkbox" id="saver"> Preview long-idle screensaver</label>
+  <button type="button" id="exit-saver" disabled>Exit screensaver</button>
+  <label><input type="checkbox" id="birthday"> Preview birthday flags</label>
+  <label>Birthday flag layout
+    <select id="birthday-layout"><option value="same">Same direction</option><option value="mirrored">Mirrored</option></select>
+  </label>
+  <label>Language
+    <select id="lang"><option value="da" selected>Dansk</option><option value="en">English</option></select>
+  </label>
+  <label>Clock face
+    <select id="clock-face"><option value="classic">Classic</option><option value="synthwave">Synthwave</option><option value="flower-power">Flower Power</option><option value="christmas">Christmas</option></select>
+  </label>
+  <label><input type="checkbox" id="sound" checked> Play buzzer sounds</label>
+  <p><button id="reset">Reset</button></p>
+  <div id="log"></div>
+</aside>
+<script src="sim.js"></script>
+<script>
+  const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, renderSVG, SETTINGS_BUTTONS, PULSE, LANGS, CLOCK_FACES } = window.BrushSim;
+  const LONG_PRESS_MS = 700;
+  const BEZEL = 20;
+  const ADV_INTERVAL_MS = 250; // simulated time between advertisements
+  const OFF_ADVERTS_MS = 1000; // a switched-off brush keeps advertising "idle" briefly, then goes quiet
+
+  const SCREENSAVER_AFTER_MS = 15 * 60 * 1000;
+  const SCREENSAVER_TRANSITION_MS = 1400;
+  let core, scene, tracker, brushes, simNow, lastReal, screen = 'main';
+  let lastActivity = 0, saverLevel = 0, saverFrom = 0, saverTarget = false, saverStartReal = 0, saverSinceReal = 0;
+  let forceSaver = false;
+  let prefs = { countUp: false, sound: true, lang: 'da', clockFace: 'classic' };
+  let settings = null;
+  const device = document.getElementById('device');
+  const logEl = document.getElementById('log');
+  const saverCheckbox = document.getElementById('saver');
+  const exitSaverButton = document.getElementById('exit-saver');
+
+  function reset() {
+    core = new BrushCore(); simNow = 0; lastReal = performance.now(); screen = 'main'; logEl.textContent = '';
+    lastActivity = 0; saverLevel = 0; saverFrom = 0; saverTarget = false; saverStartReal = 0; saverSinceReal = 0;
+    forceSaver = false; saverCheckbox.checked = false; exitSaverButton.disabled = true;
+    document.getElementById('birthday').checked = false;
+    document.getElementById('birthday-layout').value = 'same';
+    scene = new BrushScene(core, performance.now());
+    tracker = new OralbTracker();
+    brushes = ['A', 'B'].map(name => ({ name, on: false, hard: false, ms: 0, offSince: -1e9, nextAdv: 0 }));
+    renderBrushControls();
+  }
+
+  function renderBrushControls() {
+    const el = document.getElementById('brushes');
+    el.innerHTML = '';
+    for (const b of brushes) {
+      const row = document.createElement('p');
+      const power = document.createElement('button');
+      power.textContent = `Brush ${b.name}: ${b.on ? 'turn off' : 'turn on'}`;
+      power.onclick = () => {
+        b.on = !b.on;
+        if (!b.on) b.offSince = simNow;
+        b.nextAdv = simNow;
+        renderBrushControls();
+      };
+      const hard = document.createElement('label');
+      hard.style.display = 'inline';
+      hard.innerHTML = `&nbsp; <input type="checkbox" ${b.hard ? 'checked' : ''}> too hard`;
+      hard.querySelector('input').onchange = e => { b.hard = e.target.checked; };
+      row.append(power, hard);
+      el.append(row);
+    }
+  }
+
+  // Advances the virtual brushes and feeds their advertisements through the real parser + tracker.
+  function stepBrushes(dt) {
+    for (const b of brushes) {
+      if (b.on) b.ms += dt;
+      // The brush's own session clock restarts after it has been off for a while.
+      else if (simNow - b.offSince > ORALB.resumeWindowMs) b.ms = 0;
+      if (simNow < b.nextAdv || (!b.on && simNow - b.offSince > OFF_ADVERTS_MS)) continue;
+      b.nextAdv = simNow + ADV_INTERVAL_MS;
+      const adv = parseOralb(oralbAdvert({ running: b.on, pressureHigh: b.on && b.hard, seconds: b.ms / 1000 }));
+      oralbAction(tracker.onAdv(core, b.name, adv, simNow), b.name);
+    }
+    oralbAction(tracker.tick(core, simNow), '');
+  }
+
+  function oralbAction(action, name) {
+    if (action === 'started') {
+      beep('start');
+      lastActivity = simNow;
+    }
+    if (action !== 'none') log(`oral-b${name ? ' ' + name : ''}: ${action}`);
+  }
+  reset();
+
+  function log(msg) {
+    const line = document.createElement('div');
+    line.textContent = `${new Date().toLocaleTimeString()}  ${msg}`;
+    logEl.prepend(line);
+  }
+
+  // Buzzer patterns from src/board/buzzer.cpp (on/off ms). The real buzzer has one fixed pitch.
+  const PATTERNS = {
+    start: [45],
+    mark1: [30], mark2: [30, 65, 30], mark3: [30, 65, 30, 65, 30],
+    done: [45, 95, 75],
+  };
+  let audio;
+  function beep(name) {
+    log(`buzzer: ${name}`);
+    if (!prefs.sound || !document.getElementById('sound').checked) return;
+    audio = audio || new AudioContext();
+    let t = audio.currentTime;
+    PATTERNS[name].forEach((ms, i) => {
+      if (i % 2 === 0) {
+        const osc = audio.createOscillator(), gain = audio.createGain();
+        osc.type = 'sine'; osc.frequency.value = 2700; gain.gain.value = 0.02;
+        osc.connect(gain).connect(audio.destination);
+        osc.start(t); osc.stop(t + ms / 1000);
+      }
+      t += ms / 1000;
+    });
+  }
+
+  function step() {
+    const real = performance.now();
+    const dt = (real - lastReal) * Number(document.getElementById('speed').value);
+    simNow += dt;
+    lastReal = real;
+    stepBrushes(dt);
+    for (const e of core.tick(simNow)) {
+      if (e.type === 'mark') { beep(`mark${Math.min(e.mark, 3)}`); scene.pulse(e.color, PULSE.mark, real); }
+      if (e.type === 'done') { beep('done'); scene.pulse(e.color, PULSE.done, real); }
+      if (e.type === 'cleared') log('finished timer auto-cleared');
+    }
+    const saver = core.count === 0 && (forceSaver || simNow - lastActivity >= SCREENSAVER_AFTER_MS);
+    if (saver !== saverTarget) {
+      saverFrom = saverLevel;
+      saverTarget = saver;
+      exitSaverButton.disabled = !saver;
+      saverStartReal = real;
+      if (saver) saverSinceReal = real;
+    }
+    const saverProgress = Math.min(1, (real - saverStartReal) / SCREENSAVER_TRANSITION_MS);
+    const saverEase = saverProgress * saverProgress * (3 - 2 * saverProgress);
+    saverLevel = saverFrom + ((saverTarget ? 1 : 0) - saverFrom) * saverEase;
+    // Timer logic runs on (sped-up) simulated time; animations always run in real time.
+    const date = new Date();
+    const birthdayDates = document.getElementById('birthday').checked ? [[date.getMonth() + 1, date.getDate()]] : [];
+    const mirrorBirthdayFlags = document.getElementById('birthday-layout').value === 'mirrored';
+    device.innerHTML = renderSVG({ screen, core, scene, now: simNow, animNow: real, date, birthdayDates,
+      mirrorBirthdayFlags, countUp: prefs.countUp, lang: prefs.lang, clockFace: prefs.clockFace, settings, saverLevel,
+      saverElapsedMs: Math.max(0, real - saverSinceReal) });
+    requestAnimationFrame(step);
+  }
+
+  function hit(x, y) {
+    if (screen === 'settings') {
+      const b = SETTINGS_BUTTONS.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+      return b ? { kind: 'setting', id: b.id } : null;
+    }
+    if (core.count === 0) return { kind: 'idle' };
+    const l = layout(core.count);
+    const inCircle = c => Math.hypot(x - c.cx, y - c.cy) <= c.r;
+    const i = l.slots.findIndex(inCircle);
+    if (i >= 0) return { kind: 'card', index: i };
+    if (l.add.r > 0 && inCircle(l.add)) return { kind: 'add' };
+    return null;
+  }
+
+  function act(target, long) {
+    if (!target) return;
+    const fadeIn = () => device.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+    switch (target.kind) {
+      case 'idle':
+        if (long) { const d = new Date(); settings = { hour: d.getHours(), minute: d.getMinutes(), ...prefs }; screen = 'settings'; fadeIn(); }
+        else if (core.add(simNow) >= 0) beep('start');
+        break;
+      case 'add':
+        if (!long && core.add(simNow) >= 0) beep('start');
+        break;
+      case 'card':
+        if (long || core.timers[target.index].state === 'done') core.remove(target.index);
+        else if (core.timers[target.index].source === 'oralb') log('toothbrush timer: use the brush button');
+        else core.togglePause(target.index, simNow);
+        break;
+      case 'setting': {
+        const s = settings;
+        const ops = {
+          hourUp: () => s.hour = (s.hour + 1) % 24, hourDown: () => s.hour = (s.hour + 23) % 24,
+          minUp: () => s.minute = (s.minute + 1) % 60, minDown: () => s.minute = (s.minute + 59) % 60,
+          mode: () => s.countUp = !s.countUp, sound: () => s.sound = !s.sound,
+          face: () => s.clockFace = CLOCK_FACES[(CLOCK_FACES.indexOf(s.clockFace) + 1) % CLOCK_FACES.length],
+          lang: () => s.lang = LANGS[(LANGS.indexOf(s.lang) + 1) % LANGS.length],
+          done: () => {
+            prefs = { countUp: s.countUp, sound: s.sound, lang: s.lang, clockFace: s.clockFace };
+            document.getElementById('lang').value = s.lang;
+            document.getElementById('clock-face').value = s.clockFace;
+            screen = 'main'; fadeIn(); log('(time setting is not simulated)');
+          },
+        };
+        ops[target.id]();
+        break;
+      }
+    }
+  }
+
+  let pressTimer = null, pressTarget = null, longFired = false;
+  function point(ev) {
+    const r = device.getBoundingClientRect();
+    return [ev.clientX - r.left - BEZEL, ev.clientY - r.top - BEZEL];
+  }
+  device.addEventListener('pointerdown', ev => {
+    lastActivity = simNow;
+    pressTarget = hit(...point(ev));
+    longFired = false;
+    pressTimer = setTimeout(() => { longFired = true; act(pressTarget, true); }, LONG_PRESS_MS);
+  });
+  device.addEventListener('pointerup', () => {
+    clearTimeout(pressTimer);
+    if (!longFired) act(pressTarget, false);
+    pressTarget = null;
+  });
+  device.addEventListener('pointerleave', () => { clearTimeout(pressTimer); pressTarget = null; });
+  document.getElementById('reset').onclick = reset;
+  function exitScreensaver() {
+    forceSaver = false;
+    saverCheckbox.checked = false;
+    lastActivity = simNow;
+  }
+  saverCheckbox.onchange = () => {
+    if (saverCheckbox.checked) forceSaver = true;
+    else exitScreensaver();
+  };
+  exitSaverButton.onclick = exitScreensaver;
+  document.getElementById('lang').onchange = e => {
+    prefs.lang = e.target.value;
+    if (settings) settings.lang = e.target.value;
+  };
+  document.getElementById('clock-face').onchange = e => {
+    prefs.clockFace = e.target.value;
+    if (settings) settings.clockFace = e.target.value;
+  };
+
+  requestAnimationFrame(step);
+</script>
+</body>
+</html>
