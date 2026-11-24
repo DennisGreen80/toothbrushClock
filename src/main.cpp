@@ -22,8 +22,7 @@
 namespace {
 
 // ---- Behaviour ---------------------------------------------------------------------------
-constexpr uint32_t BRUSH_DURATION_MS = 2 * 60 * 1000;
-constexpr uint32_t BRUSH_MARK_MS = 30 * 1000;
+constexpr uint32_t DEFAULT_DURATION_S = 120; // brushing time until changed in settings (120/100/60/40 s)
 constexpr uint32_t AUTO_CLEAR_MS = 6 * 1000;  // finished timers (star smiley) disappear 6 s after 2:00
 constexpr uint32_t FINISH_HOLD_MS = 6 * 1000;  // a cancelled timer shows its smiley this long
 constexpr brush_lang_t DEFAULT_LANG = BRUSH_LANG_DA; // until changed in settings
@@ -43,7 +42,7 @@ constexpr int DRAW_BUF_LINES = 40;
 brush_core_t s_core;
 oralb_tracker_t s_oralb;
 Preferences s_prefs;
-UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC, 100};
+UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC, 100, true, DEFAULT_DURATION_S};
 
 uint32_t s_last_activity_ms = 0;
 uint8_t s_brightness = 0;
@@ -191,6 +190,9 @@ void load_settings()
     s_settings.clock_face = face < CLOCK_FACE_COUNT ? static_cast<ClockFace>(face) : CLOCK_FACE_CLASSIC;
     const uint8_t brightness = s_prefs.getUChar("brightness", 100);
     s_settings.brightness = brightness >= 25 && brightness <= 100 ? brightness : 100;
+    s_settings.custom_font = s_prefs.getBool("custom_font", true);
+    const uint16_t duration = s_prefs.getUShort("duration", DEFAULT_DURATION_S);
+    s_settings.duration_s = duration >= 20 && duration <= 600 ? duration : DEFAULT_DURATION_S;
 }
 
 void save_settings()
@@ -200,6 +202,8 @@ void save_settings()
     s_prefs.putUChar("lang", (uint8_t)s_settings.lang);
     s_prefs.putUChar("clock_face", s_settings.clock_face);
     s_prefs.putUChar("brightness", s_settings.brightness);
+    s_prefs.putBool("custom_font", s_settings.custom_font);
+    s_prefs.putUShort("duration", s_settings.duration_s);
 }
 
 // Eases the backlight towards its target 1 % at a time (smooth wake/dim, fade-in on boot).
@@ -345,6 +349,7 @@ void app_settings_done(int hour, int minute, bool time_changed, const UiSettings
         rtc_write(&t);
     }
     s_settings = settings;
+    brush_set_duration(&s_core, s_settings.duration_s * 1000u);
     save_settings();
     buzzer_enable(s_settings.sound);
 }
@@ -368,7 +373,7 @@ void setup()
     buzzer_init();
     buzzer_enable(s_settings.sound);
 
-    brush_cfg_t cfg = {BRUSH_DURATION_MS, BRUSH_MARK_MS, AUTO_CLEAR_MS, FINISH_HOLD_MS};
+    brush_cfg_t cfg = {s_settings.duration_s * 1000u, 0, AUTO_CLEAR_MS, FINISH_HOLD_MS}; // marks: quarters
     brush_init(&s_core, &cfg);
 
     init_lvgl();

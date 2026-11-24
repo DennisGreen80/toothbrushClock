@@ -68,6 +68,8 @@ typedef struct {
 } brush_event_t;
 
 void brush_init(brush_core_t *c, const brush_cfg_t *cfg);
+/* Changes the brushing time; marks move to its quarters. Meant for when no timers are running. */
+void brush_set_duration(brush_core_t *c, uint32_t duration_ms);
 
 /* Starts a new timer. Returns its index, or -1 if all slots are in use. */
 int brush_add(brush_core_t *c, uint32_t now_ms);

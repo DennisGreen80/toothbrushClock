@@ -24,7 +24,9 @@ stitched green dial, and **Candy Cane** (Danish: **Slikstok**) bends two candy c
 peppermints and sprinkles, with a red-and-white striped seconds ring. Hold the idle clock (or tap the gear) to open Settings, tap **Face** (Danish:
 **Urskive**) to cycle the options, then tap **Done** to save. Alternatively, swipe left or right
 on the idle clock to change and save the face. The browser simulator also has a
-**Clock face** selector. Timer screens and the long-idle screensaver are shared by all faces.
+**Clock face** selector. While timers run, the face is simplified to a plain dial in its colors behind
+the rings (light faces like Flower Power and Candy Cane keep their light dial, with timer colors
+darkened slightly for contrast); the long-idle screensaver is shared by all faces.
 
 | Synthwave | Flower Power | Christmas |
 | :---: | :---: | :---: |
@@ -81,21 +83,25 @@ Last timer removed – the ring shrinks away and the big clock returns:
 
 - **Clock** – large segment-style `HH:MM`, date, and a sweeping seconds ring. Time is kept by the
   on-board PCF85063 RTC (the system clock is re-synced from it every 10 minutes).
-- **Brush timers** – tap the clock to start a 2-minute timer. The ring is split into four mouth
-  quadrants (upper right → lower right → lower left → upper left), one per 30 seconds.
-- **Several timers at once** – up to 4 (one per family member, each in its own color). The layout
+- **Brush timers** – tap the clock to start a timer (2:00 by default; 1:40, 1:00 or 0:40 in settings).
+  The ring is split into four mouth quadrants (upper right → lower right → lower left → upper left),
+  one per quarter of the brushing time (30 s with 2:00).
+- **Several timers at once** – up to 4 (one per family member, each in its own color; the first
+  timer gets a random color). The layout
   adapts: one big ring, two side by side, or a 2×2 grid with a "+" slot.
-- **Countdown or count-up** – selectable in settings. At 2:00 the ring morphs into a star-eyed
-  smiley; finished timers disappear automatically after 1 minute.
+- **Countdown or count-up** – selectable in settings. When the time is up the ring morphs into a
+  star-eyed smiley; finished timers disappear automatically 6 seconds later.
 - **Finish smiley** – when a timer finishes, its digits fade and the ring contracts into a smiley
-  in the timer's color that rates the brushing: under 30 s a straight mouth, 30–59 s a half smile,
-  60–90 s a smile, 91–120 s a smile with twinkling gold star eyes. A cancelled timer shows its
+  in the timer's color that rates the brushing by quarters of the brushing time (with 2:00: under
+  30 s a straight mouth, 30–59 s a half smile, 60–90 s a smile, 91–120 s a smile with twinkling gold
+  star eyes). A cancelled timer shows its
   smiley for 6 s before disappearing. Preview: [preview/smileys.html](preview/smileys.html).
 - **Smooth transitions** – every layout change is animated (eased moves, springy ring bloom,
-  fades); rings "breathe" briefly on each 30 s mark and with a bigger pulse when done; the
+  fades); rings "breathe" briefly on each quarter mark and with a bigger pulse when done; the
   settings screen cross-fades; the backlight fades in on boot and fades when dimming/waking.
 - **Buzzer cues** – the on-board active buzzer is switched on or off; software can't adjust its volume.
-  Short cues mark brushing progress. Power-up, settings, pause/resume and cancelling are silent.
+  Short cues mark brushing progress (shown for 2:00; the marks are quarters of the brushing time).
+  Power-up, settings, pause/resume and cancelling are silent.
   | Event | Pattern |
   | --- | --- |
   | Timer started | One 45 ms pip |
@@ -104,7 +110,7 @@ Last timer removed – the ring shrinks away and the big clock returns:
 - **Auto-dim and screensaver** – the backlight dims after 3 minutes without touches when no timer
   is running, then drops to 8% brightness after 15 minutes. The screensaver keeps a soft, color-cycling
   clock and date on screen, with a slow position shift starting at 20 minutes of total inactivity.
-  Touching the screen wakes it smoothly.
+  Touching the screen wakes it smoothly; that first touch only wakes it, so tap again to start a timer.
 - **Oral-B toothbrush integration** – switching on an Oral-B Bluetooth brush (iO series tested in
   the protocol fixtures; other Bluetooth models use the same advertisement) automatically starts a
   timer with a toothbrush icon, synced to the brush's own session clock. See
@@ -126,10 +132,14 @@ Last timer removed – the ring shrinks away and the big clock returns:
 | Toothbrush ring | – while brushing (dismiss when done or showing a smiley) | dismiss the timer (shows its smiley for 6 s) |
 | **+** button / empty slot | add another timer | – |
 
-Swipe left or right on the idle clock to cycle clock faces.
+Swipe left or right on the idle clock to cycle clock faces. A press only counts as a tap if the finger
+stays within ~24 px, so a swipe never starts a timer by accident.
 
 **Settings** lets you set the time (hold the arrows to repeat), switch countdown/count-up,
-mute the buzzer and change the language. Settings are stored in flash (NVS); the time is
+mute the buzzer, set the screen brightness (25–100 %, applied immediately; dimming and the
+screensaver scale with it), turn the Christmas faces' custom font on/off (**Aa ✓ / ✕**), choose the
+brushing time (**🔔 2:00 / 1:40 / 1:00 / 0:40**) and change
+the language. Settings are stored in flash (NVS); the time is
 written to the RTC.
 
 > **Keeping time without power:** the RTC only survives power loss with a rechargeable cell
@@ -189,6 +199,10 @@ pio test -e native                       # unit tests for the timer logic (needs
 
 If the upload doesn't start automatically, hold **BOOT**, tap **RESET**, release **BOOT** and retry.
 
+The display refreshes at ~57 Hz (16 MHz pixel clock). If the picture ever shifts sideways or tears,
+the PSRAM frame buffer can't keep up: lower the clock with `-DLCD_PIXEL_CLOCK_MHZ=14` (or 12) in
+`build_flags`. Below ~12 MHz colored backgrounds start to visibly pulse in intensity.
+
 ## Project layout
 
 ```
@@ -212,7 +226,8 @@ src/ui/                   LVGL user interface
   seg_digits.*            scalable segment-style digits (custom drawn)
   brush_icon.*            scalable toothbrush icon (custom drawn)
   ui.*                    idle clock, adaptive timer rings, settings screen
-  fonts/                  Montserrat 14/20/28 with ÆØÅæøå + LVGL symbols (generated)
+  fonts/                  Montserrat 14/20/28 with ÆØÅæøå + LVGL symbols, Berkshire Swash / Fredoka
+                          clock + date fonts for the Christmas faces (generated)
 test/test_brush_core/     Unity tests for lib/brush_core
 preview/                  browser simulator + SVG screenshot renderer
 ```
@@ -234,7 +249,8 @@ Tunables (durations, brightness, dimming, default language) are at the top of `s
 colors and layout are in `src/ui/ui.cpp` and `lib/brush_core/src/brush_core.c`.
 
 Montserrat is licensed under the SIL Open Font License 1.1 and FontAwesome Free under the
-SIL OFL 1.1 (fonts); both are redistributed by LVGL.
+SIL OFL 1.1 (fonts); both are redistributed by LVGL. Berkshire Swash and Fredoka (SIL OFL 1.1) come
+from Google Fonts via [Fontsource](https://fontsource.org/); see `preview/fonts/*-LICENSE.txt`.
 
 ## Translations and fonts
 
@@ -251,4 +267,20 @@ npx lv_font_conv@1.5.2 --no-compress --no-prefilter --bpp 4 --size 20 \
   --font FontAwesome5-Solid+Brands+Regular.woff \
   -r 61441,61448,61451,61452,61453,61457,61459,61461,61465,61468,61473,61478,61479,61480,61502,61507,61512,61515,61516,61517,61521,61522,61523,61524,61543,61544,61550,61552,61553,61556,61559,61560,61561,61563,61587,61589,61636,61637,61639,61641,61664,61671,61674,61683,61724,61732,61787,61931,62016,62017,62018,62019,62020,62087,62099,62212,62189,62810,63426,63650 \
   --format lvgl --force-fast-kern-format --lv-include lvgl.h -o tb_font_20.c
+```
+
+The Christmas faces use **Berkshire Swash** (Christmas, Reindeer, Woven Heart) and **Fredoka**
+(Candy Cane) for the idle clock and the date; the small hint stays in Montserrat for legibility.
+The clock fonts contain only `0-9` and `:`, sized so the widest time clears the settings gear
+(`preview/fonts.html` compares other candidates). Regenerate from the Fontsource WOFF files
+(`npm pack @fontsource/berkshire-swash @fontsource/fredoka`, files in `package/files/`):
+
+```sh
+npx lv_font_conv@1.5.2 --no-compress --no-prefilter --bpp 4 --size 126 \
+  --font berkshire-swash-latin-400-normal.woff -r 0x30-0x3A \
+  --format lvgl --force-fast-kern-format --lv-include lvgl.h -o tb_font_berkshire_clock.c
+npx lv_font_conv@1.5.2 --no-compress --no-prefilter --bpp 4 --size 28 \
+  --font berkshire-swash-latin-400-normal.woff -r 0x20-0x7F,0xC5,0xC6,0xD8,0xE5,0xE6,0xF8 \
+  --format lvgl --force-fast-kern-format --lv-include lvgl.h -o tb_font_berkshire_28.c
+# Fredoka: same with fredoka-latin-600-normal.woff, --size 130 (clock) and 28 (date)
 ```

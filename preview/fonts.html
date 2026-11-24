@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Toothbrush timer – Christmas font candidates</title>
+<style>
+  @font-face { font-family: 'Mountains of Christmas'; src: url(fonts/mountains-of-christmas.woff2) format('woff2'); font-weight: 700; }
+  @font-face { font-family: 'Berkshire Swash'; src: url(fonts/berkshire-swash.woff2) format('woff2'); }
+  @font-face { font-family: 'Cinzel Decorative'; src: url(fonts/cinzel-decorative.woff2) format('woff2'); font-weight: 700; }
+  @font-face { font-family: 'Dancing Script'; src: url(fonts/dancing-script.woff2) format('woff2'); font-weight: 700; }
+  @font-face { font-family: 'Fredoka'; src: url(fonts/fredoka.woff2) format('woff2'); font-weight: 600; }
+  @font-face { font-family: 'Pacifico'; src: url(fonts/pacifico.woff2) format('woff2'); }
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 24px 32px; background: #0d0d0f; color: #c8c8cc; font: 14px/1.5 'Segoe UI', Helvetica, Arial, sans-serif; }
+  h1 { font-size: 18px; color: #fff; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: #8e8e93; max-width: 980px; }
+  .controls { display: flex; gap: 20px; margin-bottom: 16px; }
+  .row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .label { width: 190px; flex: none; }
+  .label b { color: #ececec; display: block; font-size: 15px; }
+  .row svg { width: 230px; height: 230px; flex: none; }
+</style>
+</head>
+<body>
+<h1>Font candidates for the Christmas faces</h1>
+<p>Only the date and the "tap to start" hint use a font today; the big clock is drawn as segments.
+  Each row applies one font to the clock, date and hint on the four Christmas faces (untick
+  <b>Clock in the font too</b> to keep the segment digits). All fonts are free (OFL / Apache 2.0) and include æ ø å.</p>
+<div class="controls">
+  <label><input type="checkbox" id="clock" checked> Clock in the font too</label>
+  <label>Language <select id="lang"><option value="da" selected>Dansk</option><option value="en">English</option></select></label>
+</div>
+<div id="grid"></div>
+<script src="sim.js"></script>
+<script>
+  const { BrushCore, renderSVG } = window.BrushSim;
+  // scale: date/hint size factor (script fonts have small x-heights); clock: font size per digit height.
+  const FONTS = [
+    { name: 'Montserrat (today)', note: 'Current font, for comparison' },
+    { name: 'Mountains of Christmas', family: "'Mountains of Christmas', cursive", weight: 700, scale: 1.15, clock: 1.45,
+      note: 'Whimsical, hand-drawn – the classic "Christmas" font' },
+    { name: 'Berkshire Swash', family: "'Berkshire Swash', serif", weight: 400, scale: 1.0, clock: 1.4,
+      note: 'Vintage greeting-card swashes' },
+    { name: 'Cinzel Decorative', family: "'Cinzel Decorative', serif", weight: 700, scale: 0.9, clock: 1.35,
+      note: 'Elegant engraved capitals, classic card style' },
+    { name: 'Dancing Script', family: "'Dancing Script', cursive", weight: 700, scale: 1.2, clock: 1.45,
+      note: 'Flowing handwriting, like a gift tag' },
+    { name: 'Fredoka', family: "'Fredoka', sans-serif", weight: 600, scale: 1.0, clock: 1.35,
+      note: 'Rounded and playful – suits Candy Cane' },
+    { name: 'Pacifico', family: "'Pacifico', cursive", weight: 400, scale: 0.95, clock: 1.15,
+      note: 'Retro brush script, sweet-shop feel' },
+  ];
+  const FACES = ['christmas', 'reindeer', 'heart', 'candy'];
+  const date = new Date(2026, 11, 26, 18, 47, 12); // "Lørdag 26. dec." shows ø
+
+  function render() {
+    const withClock = document.getElementById('clock').checked;
+    const lang = document.getElementById('lang').value;
+    document.getElementById('grid').innerHTML = FONTS.map(f => {
+      const textFont = f.family ? { family: f.family, weight: f.weight, scale: f.scale } : undefined;
+      const clockFont = f.family && withClock ? { family: f.family, weight: f.weight, scale: f.clock } : undefined;
+      const faces = FACES.map(face =>
+        renderSVG({ screen: 'main', core: new BrushCore(), now: 0, date, lang, clockFace: face, textFont, clockFont }));
+      return `<div class="row"><div class="label"><b>${f.name}</b>${f.note}</div>${faces.join('')}</div>`;
+    }).join('');
+  }
+  document.getElementById('clock').onchange = render;
+  document.getElementById('lang').onchange = render;
+  document.fonts.ready.then(render);
+  Promise.all(FONTS.filter(f => f.family).map(f => document.fonts.load(`${f.weight} 20px ${f.family}`))).then(render);
+</script>
+</body>
+</html>

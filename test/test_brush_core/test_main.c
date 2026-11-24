@@ -107,6 +107,19 @@ static void test_millis_wraparound(void)
     TEST_ASSERT_EQUAL_INT(BEV_MARK, ev[0].type);
 }
 
+static void test_set_duration_moves_marks_to_quarters(void)
+{
+    brush_set_duration(&core, 40000);
+    brush_add(&core, 0);
+    TEST_ASSERT_EQUAL_INT(0, brush_tick(&core, 9999, ev, 8));
+    TEST_ASSERT_EQUAL_INT(1, brush_tick(&core, 10000, ev, 8));
+    TEST_ASSERT_EQUAL_UINT8(1, ev[0].mark);
+    TEST_ASSERT_EQUAL_INT(1, brush_tick(&core, 40000, ev, 8));
+    TEST_ASSERT_EQUAL_INT(BEV_DONE, ev[0].type);
+    TEST_ASSERT_EQUAL_UINT8(2, brush_rating(&core, 0, 25000)); /* quarters of 40 s: 25 s is in 20-30 s */
+    TEST_ASSERT_EQUAL_UINT8(3, brush_rating(&core, 0, 31000));
+}
+
 static void test_first_color_is_used_only_when_no_timers_run(void)
 {
     core.first_color = 2;
@@ -496,6 +509,7 @@ int main(void)
     RUN_TEST(test_done_timer_is_auto_cleared);
     RUN_TEST(test_auto_clear_disabled);
     RUN_TEST(test_millis_wraparound);
+    RUN_TEST(test_set_duration_moves_marks_to_quarters);
     RUN_TEST(test_first_color_is_used_only_when_no_timers_run);
     RUN_TEST(test_rating_thresholds);
     RUN_TEST(test_finish_freezes_then_clears_after_hold);

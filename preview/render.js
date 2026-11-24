@@ -8,6 +8,12 @@ const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, renderSVG,
 
 const baseDir = path.join(__dirname, '..', 'docs', 'screens');
 
+// Face fonts embedded into the SVGs that use them (see FACE_FONTS in sim.js).
+const fontFace = (family, file, weight) =>
+  `@font-face{font-family:'${family}';font-weight:${weight};src:url(data:font/woff2;base64,` +
+  `${fs.readFileSync(path.join(__dirname, 'fonts', file)).toString('base64')}) format('woff2');}`;
+const fontCss = fontFace('Berkshire Swash', 'berkshire-swash.woff2', 400) + fontFace('Fredoka', 'fredoka.woff2', 600);
+
 const date = new Date(2026, 10, 23, 7, 42, 18, 400);
 const NOW = 1000000;
 const s = sec => sec * 1000;
@@ -103,7 +109,7 @@ for (const lang of LANGS) {
     console.log(`wrote ${path.relative(path.join(__dirname, '..'), path.join(outDir, `${name}.svg`))}`);
   };
   for (const [name, scene] of Object.entries(scenes(lang))) {
-    write(name, renderSVG(Object.assign({ now: NOW, date, countUp: false, lang }, scene)));
+    write(name, renderSVG(Object.assign({ now: NOW, date, countUp: false, lang, fontCss }, scene)));
   }
   for (const [name, frames] of Object.entries(transitions(lang))) {
     write(name, filmstrip(frames));

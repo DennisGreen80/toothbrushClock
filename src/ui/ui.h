@@ -25,6 +25,8 @@ struct UiSettings {
     brush_lang_t lang;
     ClockFace clock_face;
     uint8_t brightness; // percent of the normal backlight levels: 25, 50, 75 or 100
+    bool custom_font;   // Christmas faces use their own font for the clock and date
+    uint16_t duration_s; // brushing time: 120, 100, 60 or 40 seconds
 };
 
 void ui_init(brush_core_t *core, uint32_t now_ms);

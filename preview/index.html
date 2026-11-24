@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <title>Toothbrush timer – device preview</title>
 <style>
+  @font-face { font-family: 'Berkshire Swash'; src: url(fonts/berkshire-swash.woff2) format('woff2'); }
+  @font-face { font-family: 'Fredoka'; src: url(fonts/fredoka.woff2) format('woff2'); font-weight: 600; }
   :root { color-scheme: dark; }
   body { margin: 0; min-height: 100vh; display: flex; flex-wrap: wrap; gap: 40px; align-items: center; justify-content: center;
          background: #0d0d0f; color: #c8c8cc; font: 14px/1.5 'Segoe UI', Helvetica, Arial, sans-serif; }
@@ -67,7 +69,7 @@
   let core, scene, tracker, brushes, simNow, lastReal, screen = 'main';
   let lastActivity = 0, saverLevel = 0, saverFrom = 0, saverTarget = false, saverStartReal = 0, saverSinceReal = 0;
   let forceSaver = false;
-  let prefs = { countUp: false, sound: true, lang: 'da', clockFace: 'classic', brightness: 100 };
+  let prefs = { countUp: false, sound: true, lang: 'da', clockFace: 'classic', brightness: 100, customFont: true, duration: 120 };
   let settings = null;
   const device = document.getElementById('device');
   const logEl = document.getElementById('log');
@@ -75,7 +77,7 @@
   const exitSaverButton = document.getElementById('exit-saver');
 
   function reset() {
-    core = new BrushCore(); simNow = 0; lastReal = performance.now(); screen = 'main'; logEl.textContent = '';
+    core = new BrushCore(); core.setDuration(prefs.duration * 1000); simNow = 0; lastReal = performance.now(); screen = 'main'; logEl.textContent = '';
     lastActivity = 0; saverLevel = 0; saverFrom = 0; saverTarget = false; saverStartReal = 0; saverSinceReal = 0;
     forceSaver = false; saverCheckbox.checked = false; exitSaverButton.disabled = true;
     document.getElementById('birthday').checked = false;
@@ -192,7 +194,7 @@
     const birthdayDates = document.getElementById('birthday').checked ? [[date.getMonth() + 1, date.getDate()]] : [];
     const mirrorBirthdayFlags = document.getElementById('birthday-layout').value === 'mirrored';
     device.innerHTML = renderSVG({ screen, core, scene, now: simNow, animNow: real, date, birthdayDates,
-      mirrorBirthdayFlags, countUp: prefs.countUp, lang: prefs.lang, clockFace: prefs.clockFace, settings, saverLevel,
+      mirrorBirthdayFlags, countUp: prefs.countUp, lang: prefs.lang, clockFace: prefs.clockFace, customFont: prefs.customFont, settings, saverLevel,
       saverElapsedMs: Math.max(0, real - saverSinceReal) });
     // Approximates the backlight level (live while choosing it in settings, like the device).
     const pct = (settings && screen === 'settings' ? settings : prefs).brightness;
@@ -245,10 +247,13 @@
           minUp: () => s.minute = (s.minute + 1) % 60, minDown: () => s.minute = (s.minute + 59) % 60,
           mode: () => s.countUp = !s.countUp, sound: () => s.sound = !s.sound,
           bright: () => s.brightness = s.brightness >= 100 ? 25 : s.brightness + 25,
+          font: () => s.customFont = !s.customFont,
+          duration: () => { const d = [120, 100, 60, 40]; s.duration = d[(d.indexOf(s.duration) + 1) % d.length]; },
           face: () => s.clockFace = CLOCK_FACES[(CLOCK_FACES.indexOf(s.clockFace) + 1) % CLOCK_FACES.length],
           lang: () => s.lang = LANGS[(LANGS.indexOf(s.lang) + 1) % LANGS.length],
           done: () => {
-            prefs = { countUp: s.countUp, sound: s.sound, lang: s.lang, clockFace: s.clockFace, brightness: s.brightness };
+            prefs = { countUp: s.countUp, sound: s.sound, lang: s.lang, clockFace: s.clockFace, brightness: s.brightness, customFont: s.customFont, duration: s.duration };
+            core.setDuration(s.duration * 1000);
             document.getElementById('lang').value = s.lang;
             document.getElementById('clock-face').value = s.clockFace;
             screen = 'main'; fadeIn(); log('(time setting is not simulated)');

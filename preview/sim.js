@@ -42,6 +42,13 @@
     gold: '#F5B640', green: '#527763', ring: ['#FFC557', '#F78E60', '#F48CA5', '#9CC18E'] };
   const CHRISTMAS = { gold: '#FFD58D', snow: '#FFF9E8', track: '#29443A' };
   const CANDY = { red: '#D7263D', white: '#FFFFFF' };
+  // Mirrors face_fonts() in src/ui/ui.cpp. clock: font size per segment-digit height (126 / 130 px at 110),
+  // sized so the widest time ("00:00" / "22:22") stays clear of the settings gear.
+  const FACE_FONTS = {
+    berkshire: { family: "'Berkshire Swash', serif", weight: 400, clock: 126 / 110 },
+    fredoka: { family: "'Fredoka', sans-serif", weight: 600, clock: 130 / 110 },
+  };
+  const faceFont = face => FACE_FONTS[{ christmas: 'berkshire', reindeer: 'berkshire', heart: 'berkshire', candy: 'fredoka' }[face]];
   const SETTINGS_GEAR = { cx: 432, cy: 240, r: 22 };
   const FLOWER_MARKS = Array.from({ length: 60 }, (_, i) => {
     const angle = 2 * Math.PI * i / 60;
@@ -84,6 +91,8 @@
       this.timers = [];
     }
     get count() { return this.timers.length; }
+    // Mirrors brush_set_duration(): marks at quarters of the brushing time.
+    setDuration(ms) { this.cfg.durationMs = ms; this.cfg.markMs = idiv(ms, QUADRANTS); }
 
     add(now) { return this.addAt(now, 0, 'manual'); }
     addAt(now, elapsedMs, source) {
@@ -423,9 +432,9 @@
     return `<rect x="${x1}" y="${y1}" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${opa.toFixed(3)}"/>`;
   }
 
-  function text(x, cy, size, color, str, weight, opa) {
+  function text(x, cy, size, color, str, weight, opa, family) {
     const o = opa === undefined ? '' : ` fill-opacity="${opa.toFixed(3)}"`;
-    return `<text x="${x}" y="${cy}" font-family="${FONT}" font-size="${size}" font-weight="${weight || 500}" fill="${color}"${o} text-anchor="middle" dominant-baseline="central">${esc(str)}</text>`;
+    return `<text x="${x}" y="${cy}" font-family="${family || FONT}" font-size="${size}" font-weight="${weight || 500}" fill="${color}"${o} text-anchor="middle" dominant-baseline="central">${esc(str)}</text>`;
   }
 
   // LVGL angles: 0 deg = 3 o'clock, clockwise. Arc drawn inside a box of radius r with width w.
@@ -1116,6 +1125,7 @@
     if (flowerFace && themeOpa > 0.01) s += flowerBackdrop(themeOpa, ringOpa, date.getSeconds());
     if (christmasFace && themeOpa > 0.01) s += christmasBackdrop(themeOpa);
     if (EXTRA_FACES.includes(face) && themeOpa > 0.01) s += extraBackdrop(face, themeOpa);
+    const ff = state.customFont !== false ? faceFont(face) : undefined;
     const clk = scene.clock.value(t);
     const h = Math.round(clk.r), top = Math.round(clk.cy - clk.r / 2);
     if (idleOpa > 0.01) {
@@ -1129,20 +1139,31 @@
           candyFace && themeOpa > 0.01 ? candyRing(startFrac, secFrac, ringOpa) :
           arcPath(240, 240, 234, 4, 270 + 360 * startFrac, 270 + 360 * secFrac, mix(saverAccent, themed('ring'), saverLevel), ringOpa);
       }
+      // Fonts: face fonts (state.customFont !== false) or explicit experiments from preview/fonts.html
+      // (state.textFont / state.clockFont = { family, weight, scale }; textFont also styles the hint).
+      const tf = state.textFont || (ff && { family: ff.family, weight: ff.weight, scale: 1 });
       const dateColor = mix(themed('date'), saverAccent, 1 - saverLevel * 3 / 8);
-      s += text(240 + shiftX, top + shiftY + h + 34 + LINE_H[28] / 2, 28, dateColor,
-        txt.date(txt, date), 500, idleOpa);
+      s += text(240 + shiftX, top + shiftY + h + 34 + LINE_H[28] / 2, tf ? Math.round(28 * tf.scale) : 28, dateColor,
+        txt.date(txt, date), tf ? tf.weight : 500, idleOpa, tf && tf.family);
       const hintOpa = themeOpa;
       if (hintOpa > 0.01) {
         const size = face !== 'classic' ? 14 : 20;
         const hintColor = themed('hint');
-        s += text(240 + shiftX, palette.hintTop + shiftY + LINE_H[size] / 2, size, hintColor, txt.hint, 500, hintOpa);
+        const hf = state.textFont;
+        s += text(240 + shiftX, palette.hintTop + shiftY + LINE_H[size] / 2, hf ? Math.round(size * hf.scale) : size,
+          hintColor, txt.hint, hf ? hf.weight : 500, hintOpa, hf && hf.family);
         s += settingsGear(hintColor, hintOpa);
       }
     }
     const clockColor = mix(mix(themed('clock'), COLOR_MUTED, Math.round(idleOpa * 255) / 255),
       saverAccent, 1 - saverLevel);
-    s += segCentered(240 + shiftX, top + shiftY, h, clockText(date), clockColor);
+    // The font clock stays at the idle position and fades out while the segment clock shrinks into the header.
+    const cf = state.clockFont || (ff && { family: ff.family, weight: ff.weight, scale: ff.clock });
+    const fontOpa = cf ? idleOpa : 0;
+    if (fontOpa > 0.01) {
+      s += text(240 + shiftX, 212 + shiftY, Math.round(110 * cf.scale), clockColor, clockText(date), cf.weight, fontOpa, cf.family);
+    }
+    if (fontOpa < 0.99) s += segCentered(240 + shiftX, top + shiftY, h, clockText(date), clockColor, 1 - fontOpa);
 
     const flagOpa = idleOpa * (1 - saverLevel);
     if (core.count === 0 && flagOpa > 0.01 &&
@@ -1195,9 +1216,11 @@
     { id: 'mode', x: 44, y: 286, w: 140, h: 44 },
     { id: 'sound', x: 192, y: 286, w: 128, h: 44 },
     { id: 'bright', x: 328, y: 286, w: 108, h: 44 },
-    { id: 'face', x: 114, y: 338, w: 252, h: 44 },
-    { id: 'lang', x: 114, y: 390, w: 118, h: 44 },
-    { id: 'done', x: 248, y: 390, w: 118, h: 44 },
+    { id: 'face', x: 60, y: 338, w: 240, h: 44 },
+    { id: 'font', x: 308, y: 338, w: 112, h: 44 },
+    { id: 'duration', x: 99, y: 390, w: 90, h: 44 },
+    { id: 'lang', x: 195, y: 390, w: 90, h: 44 },
+    { id: 'done', x: 291, y: 390, w: 90, h: 44 },
   ];
 
   function renderSettings(st) {
@@ -1214,6 +1237,11 @@
       else if (b.id === 'sound') s += text(cx, cy, 20, COLOR_TEXT, st.sound ? `\u266A ${txt.sound}` : `\u00D7 ${txt.muted}`);
       else if (b.id === 'bright') s += text(cx, cy, 20, COLOR_TEXT, `\u25D0 ${st.brightness || 100}%`);
       else if (b.id === 'face') s += text(cx, cy, 20, COLOR_TEXT, `${txt.face}: ${faceName(st.clockFace, txt)}`);
+      else if (b.id === 'font') s += text(cx, cy, 20, COLOR_TEXT, `Aa ${st.customFont === false ? '\u2715' : '\u2713'}`);
+      else if (b.id === 'duration') {
+        const d = st.duration || 120;
+        s += text(cx, cy, 20, COLOR_TEXT, `\u{1F514}\uFE0E ${Math.floor(d / 60)}:${pad2(d % 60)}`);
+      }
       else if (b.id === 'lang') s += text(cx, cy, 20, COLOR_TEXT, txt.language);
       else s += text(cx, cy, 20, '#FFFFFF', txt.ok);
     }
@@ -1233,8 +1261,10 @@
     let content;
     if (state.screen === 'settings') content = renderSettings(state.settings);
     else content = renderMain(Object.assign({}, state, { scene: state.scene || new BrushScene(state.core, state.animNow !== undefined ? state.animNow : state.now) }));
+    // state.fontCss: optional @font-face rules embedded so standalone SVGs (docs) show the face fonts.
+    const fontCss = state.fontCss && /font-family="'(Berkshire Swash|Fredoka)'/.test(content) ? `<style>${state.fontCss}</style>` : '';
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
-      `<defs><clipPath id="screen"><circle cx="240" cy="240" r="240"/></clipPath>` +
+      `<defs>${fontCss}<clipPath id="screen"><circle cx="240" cy="240" r="240"/></clipPath>` +
       `<radialGradient id="bezel" cx="50%" cy="40%" r="60%"><stop offset="80%" stop-color="#2A2A2D"/><stop offset="100%" stop-color="#111113"/></radialGradient></defs>` +
       `<circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="url(#bezel)"/>` +
       `<g transform="translate(${bezel} ${bezel})" clip-path="url(#screen)"><rect width="480" height="480" fill="#000"/>${content}</g></svg>`;

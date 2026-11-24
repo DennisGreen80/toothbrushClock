@@ -11,8 +11,13 @@
 
 namespace {
 
-// Lower pixel clocks are more robust with the frame buffer in PSRAM; ~29 fps at 8 MHz.
-constexpr uint32_t PIXEL_CLOCK_HZ = 8 * 1000 * 1000;
+// Refresh rate = pclk / (548 * 508) with the timings below. ~29 Hz (8 MHz) made colored
+// backgrounds visibly pulse in intensity (LCD polarity inversion); 16 MHz gives ~57 Hz.
+// If the image ever shifts or tears (PSRAM bandwidth), lower it via build_flags, e.g. -DLCD_PIXEL_CLOCK_MHZ=14.
+#ifndef LCD_PIXEL_CLOCK_MHZ
+#define LCD_PIXEL_CLOCK_MHZ 16
+#endif
+constexpr uint32_t PIXEL_CLOCK_HZ = LCD_PIXEL_CLOCK_MHZ * 1000 * 1000;
 
 constexpr uint32_t BACKLIGHT_FREQ_HZ = 20000;
 constexpr uint8_t BACKLIGHT_RES_BITS = 10;

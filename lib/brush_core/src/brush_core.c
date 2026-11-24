@@ -11,6 +11,12 @@ void brush_init(brush_core_t *c, const brush_cfg_t *cfg)
     }
 }
 
+void brush_set_duration(brush_core_t *c, uint32_t duration_ms)
+{
+    c->cfg.duration_ms = duration_ms;
+    c->cfg.mark_ms = duration_ms / BRUSH_QUADRANTS;
+}
+
 static uint8_t free_color(const brush_core_t *c)
 {
     if (c->count == 0) {

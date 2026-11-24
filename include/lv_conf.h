@@ -31,9 +31,12 @@
 #define LV_USE_MEM_MONITOR 0
 
 /* Montserrat 14/20/28 + LVGL symbols + ÆØÅæøå, generated into src/ui/fonts (see README).
- * The built-in Montserrat fonts are ASCII-only, so they are disabled. */
+ * The built-in Montserrat fonts are ASCII-only, so they are disabled.
+ * Berkshire Swash / Fredoka: clock digits and date for the Christmas faces (optional in settings). */
 #define LV_FONT_MONTSERRAT_14 0
-#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(tb_font_14) LV_FONT_DECLARE(tb_font_20) LV_FONT_DECLARE(tb_font_28)
+#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(tb_font_14) LV_FONT_DECLARE(tb_font_20) LV_FONT_DECLARE(tb_font_28) \
+    LV_FONT_DECLARE(tb_font_berkshire_clock) LV_FONT_DECLARE(tb_font_berkshire_28) \
+    LV_FONT_DECLARE(tb_font_fredoka_clock) LV_FONT_DECLARE(tb_font_fredoka_28)
 #define LV_FONT_DEFAULT &tb_font_20
 
 #define LV_USE_THEME_DEFAULT 1

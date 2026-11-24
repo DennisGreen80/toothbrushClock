@@ -75,6 +75,25 @@ const FacePalette kFacePalettes[CLOCK_FACE_COUNT] = {
 };
 const FacePalette *s_palette = &kFacePalettes[CLOCK_FACE_CLASSIC]; // current face
 
+// Optional per-face fonts for the big idle clock and the date (nullptr = segment digits / Montserrat).
+struct FaceFonts {
+    const lv_font_t *clock, *date;
+};
+
+FaceFonts face_fonts(ClockFace face, bool enabled)
+{
+    if (enabled) {
+        switch (face) {
+        case CLOCK_FACE_CHRISTMAS:
+        case CLOCK_FACE_REINDEER:
+        case CLOCK_FACE_HEART: return {&tb_font_berkshire_clock, &tb_font_berkshire_28};
+        case CLOCK_FACE_CANDY: return {&tb_font_fredoka_clock, &tb_font_fredoka_28};
+        default: break;
+        }
+    }
+    return {nullptr, nullptr};
+}
+
 // Timer colors on light dials are darkened by 30 % to keep contrast.
 uint32_t card_color(uint32_t color)
 {
@@ -183,6 +202,9 @@ lv_opa_t s_timer_bg_opa = LV_OPA_TRANSP;
 ClockFace s_timer_bg_face = CLOCK_FACE_CLASSIC;
 ClockFace s_hint_face = CLOCK_FACE_CLASSIC;
 lv_obj_t *s_clock = nullptr;
+lv_obj_t *s_font_clock = nullptr;
+const lv_font_t *s_font_clock_font = nullptr;
+lv_coord_t s_font_clock_x = -1, s_font_clock_y = -1;
 lv_coord_t s_clock_h = -1, s_clock_top = -1;
 lv_obj_t *s_seconds_arc = nullptr;
 lv_obj_t *s_date = nullptr;
@@ -215,10 +237,13 @@ lv_obj_t *s_bright_label = nullptr;
 int s_set_hour = 0;
 int s_set_minute = 0;
 bool s_time_changed = false;
-UiSettings s_set_values = {false, true, BRUSH_LANG_EN, CLOCK_FACE_CLASSIC, 100};
+UiSettings s_set_values = {false, true, BRUSH_LANG_EN, CLOCK_FACE_CLASSIC, 100, true, 120};
+constexpr uint16_t kDurations[] = {120, 100, 60, 40}; // selectable brushing times (seconds)
 lv_obj_t *s_set_title = nullptr;
 lv_obj_t *s_lang_label = nullptr;
 lv_obj_t *s_face_label = nullptr;
+lv_obj_t *s_font_label = nullptr;
+lv_obj_t *s_duration_label = nullptr;
 lv_obj_t *s_ok_label = nullptr;
 
 lv_opa_t to_opa(float o)
@@ -1122,7 +1147,23 @@ void build_idle()
 
     s_clock = seg_create(s_view, 100);
     seg_set_text(s_clock, "00:00");
+    // Idle-only clock in the face's own font; the segment clock takes over when timers start.
+    s_font_clock = make_label(s_view, &tb_font_28, COLOR_TEXT, "00:00");
+    set_visible(s_font_clock, false);
     build_birthday_flags();
+}
+
+// Top of a font-clock label so the digits (not the line box) are centered on the idle clock.
+lv_coord_t font_clock_top(const lv_font_t *font)
+{
+    brush_layout_t l;
+    brush_layout(0, &l);
+    lv_font_glyph_dsc_t g;
+    if (!lv_font_get_glyph_dsc(font, &g, '0', '\0')) {
+        return (lv_coord_t)(l.clock_cy - font->line_height / 2);
+    }
+    const lv_coord_t baseline = (lv_coord_t)(font->line_height - font->base_line); // from the label top
+    return (lv_coord_t)(l.clock_cy - (baseline - g.ofs_y - g.box_h / 2));
 }
 
 float update_screensaver_level(uint32_t now_ms, bool screensaver)
@@ -1155,7 +1196,7 @@ lv_color_t screensaver_color(uint32_t elapsed_ms)
                         (lv_opa_t)(LV_OPA_COVER - to_opa(blend)));
 }
 
-void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
+void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second, bool custom_font)
 {
     const float saver_level = update_screensaver_level(now_ms, screensaver);
     const lv_opa_t saver_opa = to_opa(saver_level);
@@ -1257,7 +1298,34 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
         return lv_color_mix(lv_color_hex(palette.*field), lv_color_hex(classic.*field), theme_opa);
     };
     const lv_color_t clock_color = lv_color_mix(themed(&FacePalette::clock), lv_color_hex(COLOR_MUTED), opa);
-    seg_set_color(s_clock, lv_color_mix(clock_color, accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)));
+    const lv_color_t clock_final = lv_color_mix(clock_color, accent, (lv_opa_t)(LV_OPA_COVER - saver_opa));
+    seg_set_color(s_clock, clock_final);
+
+    // Face fonts: the font clock is shown while idle (fading out as the segment clock shrinks into
+    // the header when a timer starts); the date switches font directly.
+    const FaceFonts fonts = face_fonts(face, custom_font);
+    const lv_font_t *date_font = fonts.date ? fonts.date : &tb_font_28;
+    if (lv_obj_get_style_text_font(s_date, LV_PART_MAIN) != date_font) {
+        lv_obj_set_style_text_font(s_date, date_font, 0);
+    }
+    const lv_opa_t font_clock_opa = fonts.clock ? opa : LV_OPA_TRANSP;
+    seg_set_opa(s_clock, (lv_opa_t)(LV_OPA_COVER - font_clock_opa));
+    set_visible(s_font_clock, font_clock_opa > LV_OPA_MIN);
+    if (fonts.clock) {
+        if (fonts.clock != s_font_clock_font) {
+            s_font_clock_font = fonts.clock;
+            lv_obj_set_style_text_font(s_font_clock, fonts.clock, 0);
+            s_font_clock_y = -1; // re-center for the new font
+        }
+        const lv_coord_t fy = font_clock_top(fonts.clock) + shift_y;
+        if (shift_x != s_font_clock_x || fy != s_font_clock_y) {
+            s_font_clock_x = shift_x;
+            s_font_clock_y = fy;
+            lv_obj_align(s_font_clock, LV_ALIGN_TOP_MID, shift_x, fy);
+        }
+        set_text_color(s_font_clock, clock_final);
+        set_text_opa(s_font_clock, font_clock_opa);
+    }
     set_text_color(s_date,
         lv_color_mix(themed(&FacePalette::date), accent, (lv_opa_t)(LV_OPA_COVER - (uint16_t)saver_opa * 3 / 8)));
     set_text_opa(s_date, opa);
@@ -1825,11 +1893,15 @@ void refresh_settings()
                      : s_set_values.clock_face == CLOCK_FACE_FLOWER_POWER ? "Flower Power"
                      : s_set_values.clock_face == CLOCK_FACE_SYNTHWAVE ? "Synthwave" : t->classic;
     lv_label_set_text_fmt(s_face_label, "%s: %s", t->clock_face, face);
+    lv_label_set_text_fmt(s_font_label, "Aa %s", s_set_values.custom_font ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
+    lv_label_set_text_fmt(s_duration_label, "%s %d:%02d", LV_SYMBOL_BELL, s_set_values.duration_s / 60,
+                          s_set_values.duration_s % 60);
     lv_label_set_text(s_ok_label, t->ok);
 }
 
 enum SettingsAction : intptr_t {
-    HOUR_UP, HOUR_DOWN, MIN_UP, MIN_DOWN, TOGGLE_MODE, TOGGLE_SOUND, TOGGLE_BRIGHTNESS, TOGGLE_FACE, TOGGLE_LANG, DONE,
+    HOUR_UP, HOUR_DOWN, MIN_UP, MIN_DOWN, TOGGLE_MODE, TOGGLE_SOUND, TOGGLE_BRIGHTNESS, TOGGLE_FACE, TOGGLE_FONT,
+    TOGGLE_DURATION, TOGGLE_LANG, DONE,
 };
 
 void settings_event_cb(lv_event_t *e)
@@ -1846,6 +1918,15 @@ void settings_event_cb(lv_event_t *e)
         s_set_values.brightness = s_set_values.brightness >= 100 ? 25 : (uint8_t)(s_set_values.brightness / 25 * 25 + 25);
         app_preview_brightness(s_set_values.brightness);
         break;
+    case TOGGLE_FONT: s_set_values.custom_font = !s_set_values.custom_font; break;
+    case TOGGLE_DURATION: {
+        size_t i = 0;
+        while (i < LV_ARRAY_LEN(kDurations) && kDurations[i] != s_set_values.duration_s) {
+            i++;
+        }
+        s_set_values.duration_s = kDurations[(i + 1) % LV_ARRAY_LEN(kDurations)]; // unknown values restart at 2:00
+        break;
+    }
     case TOGGLE_FACE:
         s_set_values.clock_face = static_cast<ClockFace>((s_set_values.clock_face + 1) % CLOCK_FACE_COUNT);
         break;
@@ -1927,18 +2008,30 @@ void build_settings()
     s_bright_label = make_label(bright, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_bright_label);
 
-    lv_obj_t *face = make_button(s_settings_scr, 252, 44, COLOR_SURFACE, TOGGLE_FACE, false);
-    lv_obj_set_pos(face, 114, 338);
+    lv_obj_t *face = make_button(s_settings_scr, 240, 44, COLOR_SURFACE, TOGGLE_FACE, false);
+    lv_obj_set_pos(face, 60, 338);
     s_face_label = make_label(face, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_face_label);
 
-    lv_obj_t *lang = make_button(s_settings_scr, 118, 44, COLOR_SURFACE, TOGGLE_LANG, false);
-    lv_obj_set_pos(lang, 114, 390);
+    // Custom face fonts on/off ("Aa ✓" / "Aa ✕").
+    lv_obj_t *font = make_button(s_settings_scr, 112, 44, COLOR_SURFACE, TOGGLE_FONT, false);
+    lv_obj_set_pos(font, 308, 338);
+    s_font_label = make_label(font, &tb_font_20, COLOR_TEXT, "");
+    lv_obj_center(s_font_label);
+
+    // Brushing time | language | done; narrower buttons so the row fits inside the round screen.
+    lv_obj_t *duration = make_button(s_settings_scr, 90, 44, COLOR_SURFACE, TOGGLE_DURATION, false);
+    lv_obj_set_pos(duration, 99, 390);
+    s_duration_label = make_label(duration, &tb_font_20, COLOR_TEXT, "");
+    lv_obj_center(s_duration_label);
+
+    lv_obj_t *lang = make_button(s_settings_scr, 90, 44, COLOR_SURFACE, TOGGLE_LANG, false);
+    lv_obj_set_pos(lang, 195, 390);
     s_lang_label = make_label(lang, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_lang_label);
 
-    lv_obj_t *done = make_button(s_settings_scr, 118, 44, 0x1F8A4C, DONE, false);
-    lv_obj_set_pos(done, 248, 390);
+    lv_obj_t *done = make_button(s_settings_scr, 90, 44, 0x1F8A4C, DONE, false);
+    lv_obj_set_pos(done, 291, 390);
     s_ok_label = make_label(done, &tb_font_20, 0xFFFFFF, "");
     lv_obj_center(s_ok_label);
 }
@@ -2004,12 +2097,16 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
         }
     }
     apply_add(now_ms);
-    apply_idle(now_ms, screensaver, settings.clock_face, LV_MIN(local_time->tm_sec, FLOWER_MARKS - 1));
+    apply_idle(now_ms, screensaver, settings.clock_face, LV_MIN(local_time->tm_sec, FLOWER_MARKS - 1),
+               settings.custom_font);
     update_birthday_flags(now_ms, *local_time);
 
     char clock[8];
     snprintf(clock, sizeof(clock), "%02d:%02d", local_time->tm_hour, local_time->tm_min);
     seg_set_text(s_clock, clock);
+    if (strcmp(lv_label_get_text(s_font_clock), clock) != 0) {
+        lv_label_set_text(s_font_clock, clock);
+    }
 
     if (s_idle_opa > LV_OPA_MIN) {
         if (settings.clock_face != CLOCK_FACE_FLOWER_POWER) {
