@@ -26,6 +26,7 @@
   <h1>Toothbrush timer simulator</h1>
   <ul>
     <li><b>Tap</b> the clock to start a timer; <b>hold</b> it or tap the <b>gear</b> to open settings</li>
+    <li><b>Swipe</b> left/right on the clock to change the clock face</li>
     <li><b>Tap</b> a ring to pause/resume (or dismiss when done)</li>
     <li><b>Hold</b> a ring to cancel it (its smiley shows for 6 s)</li>
     <li><b>+</b> adds another timer (up to 4)</li>
@@ -165,8 +166,11 @@
     simNow += dt;
     lastReal = real;
     stepBrushes(dt);
-    // The finish smiley is display time, not brushing time: hold it 6 real seconds at any speed.
-    core.cfg.finishHoldMs = 6000 * Number(document.getElementById('speed').value);
+    // Smiley hold and auto-clear are display times, not brushing time: keep them 6 real seconds at any speed.
+    const speed = Number(document.getElementById('speed').value);
+    core.cfg.finishHoldMs = 6000 * speed;
+    core.cfg.autoClearMs = 6000 * speed;
+    if (core.count === 0) core.firstColor = Math.floor(Math.random() * 4); // first timer gets a random color
     for (const e of core.tick(simNow)) {
       if (e.type === 'mark') { beep(`mark${Math.min(e.mark, 3)}`); scene.pulse(e.color, PULSE.mark, real); }
       if (e.type === 'done') { beep('done'); scene.pulse(e.color, PULSE.done, real); }
@@ -252,23 +256,50 @@
     }
   }
 
-  let pressTimer = null, pressTarget = null, longFired = false;
+  // Mirrors idle_event_cb() in src/ui/ui.cpp: taps vs. swipes are decided by how far the pointer moved.
+  const TAP_SLOP = 24, SWIPE_MIN = 50;
+  let pressTimer = null, pressTarget = null, longFired = false, pressStart = null, pressMoved = false;
   function point(ev) {
     const r = device.getBoundingClientRect();
     return [ev.clientX - r.left - BEZEL, ev.clientY - r.top - BEZEL];
   }
   device.addEventListener('pointerdown', ev => {
+    // Mirrors lvgl_touch_cb() in src/main.cpp: a touch during the screensaver only wakes the screen.
+    if (saverTarget) {
+      exitScreensaver();
+      return;
+    }
     lastActivity = simNow;
-    pressTarget = hit(...point(ev));
+    pressStart = point(ev);
+    pressMoved = false;
+    pressTarget = hit(...pressStart);
     longFired = false;
     pressTimer = setTimeout(() => { longFired = true; act(pressTarget, true); }, LONG_PRESS_MS);
   });
-  device.addEventListener('pointerup', () => {
-    clearTimeout(pressTimer);
-    if (!longFired) act(pressTarget, false);
-    pressTarget = null;
+  device.addEventListener('pointermove', ev => {
+    if (!pressStart) return;
+    const [x, y] = point(ev);
+    if (Math.abs(x - pressStart[0]) > TAP_SLOP || Math.abs(y - pressStart[1]) > TAP_SLOP) {
+      pressMoved = true;
+      clearTimeout(pressTimer);
+    }
   });
-  device.addEventListener('pointerleave', () => { clearTimeout(pressTimer); pressTarget = null; });
+  device.addEventListener('pointerup', ev => {
+    clearTimeout(pressTimer);
+    const [x, y] = point(ev);
+    const dx = pressStart ? x - pressStart[0] : 0, dy = pressStart ? y - pressStart[1] : 0;
+    if (!longFired && pressTarget && pressTarget.kind === 'idle' &&
+        Math.abs(dx) >= SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      const i = CLOCK_FACES.indexOf(prefs.clockFace);
+      prefs.clockFace = CLOCK_FACES[(i + (dx < 0 ? 1 : CLOCK_FACES.length - 1)) % CLOCK_FACES.length];
+      document.getElementById('clock-face').value = prefs.clockFace;
+    } else if (!longFired && !pressMoved) {
+      act(pressTarget, false);
+    }
+    pressTarget = null;
+    pressStart = null;
+  });
+  device.addEventListener('pointerleave', () => { clearTimeout(pressTimer); pressTarget = null; pressStart = null; });
   document.getElementById('reset').onclick = reset;
   function exitScreensaver() {
     forceSaver = false;

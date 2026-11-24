@@ -50,20 +50,40 @@ constexpr lv_coord_t CHRISTMAS_HINT_TOP = 344;
 constexpr uint32_t CANDY_RED = 0xD7263D, CANDY_WHITE = 0xFFFFFF;
 
 // Per-face text and seconds-ring colors, indexed by ClockFace (mirrored in preview/sim.js).
+// `bg`/`rim` are the simplified dial shown behind the timer rings (0 = plain black). Faces with
+// a light dial set `ink`: timer colors are darkened and status text uses `ink` so they stay readable.
+enum RimStyle : uint8_t { RIM_PLAIN, RIM_STITCH, RIM_CANDY, RIM_FLOWER };
 struct FacePalette {
     uint32_t clock, date, hint, track, ring;
     lv_coord_t hint_top;
+    uint32_t bg, rim;
+    RimStyle rim_style;
+    uint32_t ink;
 };
 const FacePalette kFacePalettes[CLOCK_FACE_COUNT] = {
-    {COLOR_TEXT, COLOR_MUTED, COLOR_FAINT, 0x1A1A1C, 0x3DD6F5, 372},                 // classic
-    {SYNTH_CLOCK, SYNTH_DATE, SYNTH_HINT, SYNTH_TRACK, 0x3DD6F5, SYNTH_HINT_TOP},     // synthwave
-    {FLOWER_INK, 0x6C304A, 0x3D5C4E, FLOWER_INK, 0x3DD6F5, FLOWER_HINT_TOP},         // flower power
-    {CHRISTMAS_SNOW, CHRISTMAS_GOLD, 0xA6C3B4, CHRISTMAS_TRACK, CHRISTMAS_GOLD, CHRISTMAS_HINT_TOP},
-    {0xFFF2B0, 0x63EBD0, 0xEFA7DB, 0x473466, 0xFF69B4, CHRISTMAS_HINT_TOP},          // 90s
-    {0xF1FAFF, 0xA9D9F0, 0xA9C6D9, 0x36536A, 0xD9F4FF, CHRISTMAS_HINT_TOP},          // reindeer
-    {0xF4EBD7, 0xE9C99A, 0x9DBFA6, 0x2E5E43, 0xD93A3A, CHRISTMAS_HINT_TOP},          // woven heart
-    {0xB3122E, 0x2E8B57, 0xC46B7D, 0xF7C5CF, CANDY_RED, CHRISTMAS_HINT_TOP},         // candy cane
+    {COLOR_TEXT, COLOR_MUTED, COLOR_FAINT, 0x1A1A1C, 0x3DD6F5, 372, 0, 0, RIM_PLAIN, 0},                         // classic
+    {SYNTH_CLOCK, SYNTH_DATE, SYNTH_HINT, SYNTH_TRACK, 0x3DD6F5, SYNTH_HINT_TOP, 0x241040, 0xFF53BB, RIM_PLAIN, 0}, // synthwave
+    {FLOWER_INK, 0x6C304A, 0x3D5C4E, FLOWER_INK, 0x3DD6F5, FLOWER_HINT_TOP, FLOWER_PAPER, FLOWER_INK, RIM_FLOWER,
+     FLOWER_INK},                                                                                                // flower power
+    {CHRISTMAS_SNOW, CHRISTMAS_GOLD, 0xA6C3B4, CHRISTMAS_TRACK, CHRISTMAS_GOLD, CHRISTMAS_HINT_TOP, 0x112A25, 0x36554A,
+     RIM_PLAIN, 0},
+    {0xFFF2B0, 0x63EBD0, 0xEFA7DB, 0x473466, 0xFF69B4, CHRISTMAS_HINT_TOP, 0x211638, 0x7A59C9, RIM_PLAIN, 0},       // 90s
+    {0xF1FAFF, 0xA9D9F0, 0xA9C6D9, 0x36536A, 0xD9F4FF, CHRISTMAS_HINT_TOP, 0x102B43, 0x527897, RIM_PLAIN, 0},       // reindeer
+    {0xF4EBD7, 0xE9C99A, 0x9DBFA6, 0x2E5E43, 0xD93A3A, CHRISTMAS_HINT_TOP, 0x163A2A, 0x0E2A1D, RIM_STITCH, 0},      // woven heart
+    {0xB3122E, 0x2E8B57, 0xC46B7D, 0xF7C5CF, CANDY_RED, CHRISTMAS_HINT_TOP, 0xFFF3E8, CANDY_RED, RIM_CANDY,
+     0x8A2A3A},                                                                                                  // candy cane
 };
+const FacePalette *s_palette = &kFacePalettes[CLOCK_FACE_CLASSIC]; // current face
+
+// Timer colors on light dials are darkened by 30 % to keep contrast.
+uint32_t card_color(uint32_t color)
+{
+    if (!s_palette->ink) {
+        return color;
+    }
+    const auto dark = [&](int shift) { return (uint32_t)(((color >> shift) & 0xFF) * 7 / 10) << shift; };
+    return dark(16) | dark(8) | dark(0);
+}
 constexpr lv_coord_t GEAR_CX = 432, GEAR_CY = 240, GEAR_SIZE = 44;
 constexpr uint32_t SCREENSAVER_TRANSITION_MS = 1400;
 constexpr uint32_t SCREENSAVER_COLOR_CYCLE_MS = 64000;
@@ -158,6 +178,9 @@ lv_obj_t *s_extra_backdrop = nullptr;
 lv_opa_t s_extra_opa = LV_OPA_TRANSP;
 ClockFace s_extra_face = CLOCK_FACE_NINETIES;
 lv_opa_t s_candy_opa = LV_OPA_TRANSP; // candy-cane striped seconds ring
+lv_obj_t *s_timer_bg = nullptr;       // simplified face dial behind the timer rings
+lv_opa_t s_timer_bg_opa = LV_OPA_TRANSP;
+ClockFace s_timer_bg_face = CLOCK_FACE_CLASSIC;
 ClockFace s_hint_face = CLOCK_FACE_CLASSIC;
 lv_obj_t *s_clock = nullptr;
 lv_coord_t s_clock_h = -1, s_clock_top = -1;
@@ -250,25 +273,50 @@ lv_obj_t *make_arc(lv_obj_t *parent)
 
 // ---- Event handlers ------------------------------------------------------------------
 
+// Taps and swipes on the idle clock are told apart on release by how far the finger moved, so a
+// slow swipe never falls through as a tap (which would start a timer).
+constexpr lv_coord_t TAP_SLOP = 24;  // max movement for a tap or long press
+constexpr lv_coord_t SWIPE_MIN = 50; // min horizontal travel for a swipe
+lv_point_t s_press_start = {0, 0};
+bool s_press_moved = false, s_press_long = false;
+
 void idle_event_cb(lv_event_t *e)
 {
-    if (s_core->count != 0) {
+    lv_indev_t *indev = lv_indev_get_act();
+    if (!indev) {
         return;
     }
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_SHORT_CLICKED) {
-        app_start_timer();
-    } else if (code == LV_EVENT_LONG_PRESSED) {
-        app_open_settings();
-    } else if (code == LV_EVENT_GESTURE) {
-        lv_indev_t *indev = lv_indev_get_act();
-        if (indev) {
-            const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
-            if (direction == LV_DIR_LEFT || direction == LV_DIR_RIGHT) {
-                lv_indev_wait_release(indev);
-                app_change_clock_face(direction == LV_DIR_LEFT);
-            }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    const lv_coord_t dx = p.x - s_press_start.x, dy = p.y - s_press_start.y;
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_PRESSED:
+        s_press_start = p;
+        s_press_moved = s_press_long = false;
+        return;
+    case LV_EVENT_PRESSING:
+        if (LV_ABS(dx) > TAP_SLOP || LV_ABS(dy) > TAP_SLOP) {
+            s_press_moved = true;
         }
+        return;
+    case LV_EVENT_LONG_PRESSED:
+        if (!s_press_moved && s_core->count == 0) {
+            s_press_long = true;
+            app_open_settings();
+        }
+        return;
+    case LV_EVENT_RELEASED:
+        break;
+    default:
+        return;
+    }
+    if (s_press_long || s_core->count != 0) {
+        return;
+    }
+    if (LV_ABS(dx) >= SWIPE_MIN && LV_ABS(dx) > LV_ABS(dy) * 3 / 2) {
+        app_change_clock_face(dx < 0);
+    } else if (!s_press_moved) {
+        app_start_timer();
     }
 }
 
@@ -927,8 +975,60 @@ void update_birthday_flags(uint32_t now_ms, const struct tm &date)
     }
 }
 
+void draw_timer_bg(lv_event_t *e)
+{
+    const FacePalette &p = kFacePalettes[s_timer_bg_face];
+    if (p.bg == 0 || s_timer_bg_opa <= LV_OPA_MIN) {
+        return;
+    }
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    const lv_area_t &box = s_timer_bg->coords;
+    lv_draw_rect_dsc_t rect;
+    lv_draw_rect_dsc_init(&rect);
+    rect.radius = LV_RADIUS_CIRCLE;
+    rect.bg_opa = s_timer_bg_opa;
+    rect.bg_color = lv_color_hex(p.bg);
+    rect.border_color = lv_color_hex(p.rim);
+    rect.border_width = p.rim_style == RIM_CANDY ? 0 : 4;
+    rect.border_opa = s_timer_bg_opa;
+    // The candy stripes go around the outside of the dial so the white ones show against the bezel.
+    const lv_coord_t inset = p.rim_style == RIM_CANDY ? 26 : 19;
+    const lv_area_t dial = {(lv_coord_t)(box.x1 + inset), (lv_coord_t)(box.y1 + inset),
+                            (lv_coord_t)(box.x1 + 480 - inset), (lv_coord_t)(box.y1 + 480 - inset)};
+    lv_draw_rect(ctx, &rect, &dial);
+
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.opa = s_timer_bg_opa;
+    const lv_point_t center = {(lv_coord_t)(box.x1 + 240), (lv_coord_t)(box.y1 + 240)};
+    if (p.rim_style == RIM_CANDY) {
+        arc.width = 6; // red/white candy-cane stripes around the dial
+        for (int a = 0; a < 360; a += 8) {
+            arc.color = lv_color_hex((a / 8) % 2 ? CANDY_WHITE : CANDY_RED);
+            lv_draw_arc(ctx, &arc, &center, 221, (uint16_t)a, (uint16_t)(a + 8));
+        }
+    } else if (p.rim_style == RIM_STITCH) {
+        arc.width = 2; // running stitch, as on the idle face
+        arc.color = lv_color_hex(0xF1E6CC);
+        for (int a = 0; a < 360; a += 6) {
+            lv_draw_arc(ctx, &arc, &center, 212, (uint16_t)a, (uint16_t)(a + 3));
+        }
+    } else if (p.rim_style == RIM_FLOWER) {
+        arc.width = 4; // gold ring inside the ink rim, as on the idle face
+        arc.color = lv_color_hex(FLOWER_GOLD);
+        lv_draw_arc(ctx, &arc, &center, 217, 0, 360);
+    }
+}
+
 void build_idle()
 {
+    s_timer_bg = lv_obj_create(s_view);
+    lv_obj_remove_style_all(s_timer_bg);
+    lv_obj_clear_flag(s_timer_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_timer_bg, LCD_WIDTH, LCD_HEIGHT);
+    set_visible(s_timer_bg, false);
+    lv_obj_add_event_cb(s_timer_bg, draw_timer_bg, LV_EVENT_DRAW_MAIN, nullptr);
+
     s_synth_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_synth_backdrop);
     lv_obj_clear_flag(s_synth_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -1063,6 +1163,14 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
         lv_obj_invalidate(s_extra_backdrop);
     }
     s_candy_opa = face == CLOCK_FACE_CANDY ? theme_opa : LV_OPA_TRANSP;
+    // While timers run, the decorated face fades into a plain dial in the face's colors.
+    const lv_opa_t timer_bg = kFacePalettes[face].bg ? (lv_opa_t)(LV_OPA_COVER - opa) : LV_OPA_TRANSP;
+    if (timer_bg != s_timer_bg_opa || face != s_timer_bg_face) {
+        s_timer_bg_opa = timer_bg;
+        s_timer_bg_face = face;
+        set_visible(s_timer_bg, timer_bg > LV_OPA_MIN);
+        lv_obj_invalidate(s_timer_bg);
+    }
     const lv_opa_t christmas_opa = christmas ? theme_opa : LV_OPA_TRANSP;
     if (christmas_opa != s_christmas_opa) {
         s_christmas_opa = christmas_opa;
@@ -1279,7 +1387,7 @@ void draw_smiley(lv_event_t *e)
         : 1.0f;
     const SmileyPen pen = {ctx, {(lv_coord_t)((box.x1 + box.x2 + 1) / 2), (lv_coord_t)((box.y1 + box.y2 + 1) / 2)},
                            c.r / SMILEY_UNIT * bounce};
-    const lv_color_t color = lv_color_hex(c.color), gold = lv_color_hex(SMILEY_GOLD);
+    const lv_color_t color = lv_color_hex(c.color), gold = lv_color_hex(s_palette->ink ? 0xD99A1E : SMILEY_GOLD);
 
     // The four quadrant arcs close their gaps, fill up and contract into the head.
     const float m = brush_ease(EASE_IN_OUT_CUBIC, phase_of(t, SMILEY_MORPH_DELAY_MS, SMILEY_MORPH_MS));
@@ -1437,7 +1545,8 @@ void style_card(Card &c)
 
     // Pressure is only meaningful while the brush is actually running.
     const bool too_hard = c.oralb && c.pressure_high && c.state == BT_RUNNING;
-    lv_color_t status_color = c.state == BT_RUNNING ? lv_color_hex(COLOR_MUTED) : color;
+    const uint32_t ink = s_palette->ink; // light dial: white details and gray text use the face's ink
+    lv_color_t status_color = c.state == BT_RUNNING ? lv_color_hex(ink ? ink : COLOR_MUTED) : color;
     if (too_hard) {
         status_color = lv_color_hex(COLOR_PRESSURE_HIGH);
     }
@@ -1447,10 +1556,11 @@ void style_card(Card &c)
     set_visible(c.icon, c.oralb && content > LV_OPA_MIN);
     set_visible(c.pressure, c.oralb && c.state != BT_DONE && !c.smiley);
     if (c.oralb) {
-        const lv_color_t bristles = too_hard ? lv_color_hex(COLOR_PRESSURE_HIGH) : lv_color_white();
+        const lv_color_t bristles = too_hard ? lv_color_hex(COLOR_PRESSURE_HIGH)
+                                             : ink ? lv_color_hex(ink) : lv_color_white();
         brush_icon_set_colors(c.icon, dimmed, bristles, content);
-        lv_obj_set_style_arc_color(c.pressure, lv_color_hex(too_hard ? COLOR_PRESSURE_HIGH : COLOR_PRESSURE_OK),
-                                   LV_PART_MAIN);
+        lv_obj_set_style_arc_color(c.pressure,
+            lv_color_hex(too_hard ? COLOR_PRESSURE_HIGH : ink ? ink : COLOR_PRESSURE_OK), LV_PART_MAIN);
         lv_obj_set_style_arc_opa(c.pressure, scale_opa(too_hard ? LV_OPA_COVER : PRESSURE_OK_OPA, c.opa),
                                  LV_PART_MAIN);
     }
@@ -1534,7 +1644,7 @@ void update_smiley(Card &c, uint32_t now_ms)
 void update_card_content(Card &c, int index, uint32_t now_ms, bool count_up)
 {
     const brush_timer_t &t = s_core->timers[index];
-    const uint32_t color = kTimerColors[t.color % BRUSH_MAX_TIMERS];
+    const uint32_t color = card_color(kTimerColors[t.color % BRUSH_MAX_TIMERS]);
     const bool oralb = t.source == BRUSH_SRC_ORALB;
     const bool pressure_high = oralb && t.pressure_high;
     const bool smiley = t.state == BT_DONE || t.finishing;
@@ -1578,8 +1688,7 @@ void update_card_content(Card &c, int index, uint32_t now_ms, bool count_up)
     case BT_PAUSED: status = s_txt->paused; break;
     case BT_DONE: status = s_txt->done; break;
     case BT_RUNNING:
-        status = (oralb && t.pressure_high) ? s_txt->too_hard
-                                            : s_txt->quadrants[brush_current_quadrant(s_core, index, now_ms)];
+        status = (oralb && t.pressure_high) ? s_txt->too_hard : ""; // quadrant names hidden for now
         break;
     }
     if (strcmp(lv_label_get_text(c.status), status) != 0) {
@@ -1815,9 +1924,9 @@ void ui_init(brush_core_t *core, uint32_t now_ms)
     lv_obj_remove_style_all(s_view);
     lv_obj_clear_flag(s_view, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_size(s_view, LCD_WIDTH, LCD_HEIGHT);
-    lv_obj_add_event_cb(s_view, idle_event_cb, LV_EVENT_SHORT_CLICKED, nullptr);
-    lv_obj_add_event_cb(s_view, idle_event_cb, LV_EVENT_LONG_PRESSED, nullptr);
-    lv_obj_add_event_cb(s_view, idle_event_cb, LV_EVENT_GESTURE, nullptr);
+    for (lv_event_code_t code : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_LONG_PRESSED, LV_EVENT_RELEASED}) {
+        lv_obj_add_event_cb(s_view, idle_event_cb, code, nullptr);
+    }
 
     build_idle();
     for (int c = 0; c < BRUSH_MAX_TIMERS; c++) {
@@ -1842,6 +1951,7 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
     if (brush_scene_sync(&s_scene, s_core, now_ms)) {
         on_layout_changed();
     }
+    s_palette = &kFacePalettes[settings.clock_face < CLOCK_FACE_COUNT ? settings.clock_face : CLOCK_FACE_CLASSIC];
 
     for (int c = 0; c < BRUSH_MAX_TIMERS; c++) {
         Card &card = s_cards[c];

@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <Wire.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 #include <lvgl.h>
 #include <sys/time.h>
 #include <time.h>
@@ -23,7 +24,7 @@ namespace {
 // ---- Behaviour ---------------------------------------------------------------------------
 constexpr uint32_t BRUSH_DURATION_MS = 2 * 60 * 1000;
 constexpr uint32_t BRUSH_MARK_MS = 30 * 1000;
-constexpr uint32_t AUTO_CLEAR_MS = 60 * 1000; // finished timers disappear after 1 min overtime
+constexpr uint32_t AUTO_CLEAR_MS = 6 * 1000;  // finished timers (star smiley) disappear 6 s after 2:00
 constexpr uint32_t FINISH_HOLD_MS = 6 * 1000;  // a cancelled timer shows its smiley this long
 constexpr brush_lang_t DEFAULT_LANG = BRUSH_LANG_DA; // until changed in settings
 
@@ -122,14 +123,29 @@ void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *pixels
     lv_disp_flush_ready(drv);
 }
 
+bool screensaver_active(uint32_t now_ms);
+
+// A touch that starts while the screensaver is on only wakes the screen: it is hidden from LVGL
+// until the finger lifts, so starting a timer needs a second tap.
+bool s_touch_down = false, s_swallow_touch = false;
+
 void lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *data)
 {
     uint16_t x = 0, y = 0;
     if (touch_read(&x, &y)) {
+        const uint32_t now = millis();
+        if (!s_touch_down && screensaver_active(now)) {
+            s_swallow_touch = true;
+        }
+        s_touch_down = true;
+        s_last_activity_ms = now;
+    } else {
+        s_touch_down = s_swallow_touch = false;
+    }
+    if (s_touch_down && !s_swallow_touch) {
         data->point.x = (lv_coord_t)x;
         data->point.y = (lv_coord_t)y;
         data->state = LV_INDEV_STATE_PRESSED;
-        s_last_activity_ms = millis();
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
@@ -364,6 +380,9 @@ void loop()
 
     handle_oralb(now);
     handle_core_events(now);
+    if (s_core.count == 0) {
+        s_core.first_color = (uint8_t)(esp_random() % BRUSH_MAX_TIMERS); // first timer gets a random color
+    }
 
     // Every loop while something moves (smooth animations), otherwise ~20 Hz.
     const bool animating = ui_animating(now);

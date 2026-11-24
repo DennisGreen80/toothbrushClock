@@ -28,13 +28,13 @@
   // Mirrors kFacePalettes in src/ui/ui.cpp.
   const FACE_PALETTE = {
     classic: { clock: '#ECECEC', date: '#8E8E93', hint: '#5A5A5E', track: '#1A1A1C', ring: '#3DD6F5', hintTop: 372 },
-    synthwave: { clock: '#FFD4F7', date: '#A4F5FF', hint: '#D6B2F2', track: '#321841', ring: '#3DD6F5', hintTop: 342 },
-    'flower-power': { clock: '#43223B', date: '#6C304A', hint: '#3D5C4E', track: '#43223B', ring: '#3DD6F5', hintTop: 348 },
-    christmas: { clock: '#FFF9E8', date: '#FFD58D', hint: '#A6C3B4', track: '#29443A', ring: '#FFD58D', hintTop: 344 },
-    nineties: { clock: '#FFF2B0', date: '#63EBD0', hint: '#EFA7DB', track: '#473466', ring: '#FF69B4', hintTop: 344 },
-    reindeer: { clock: '#F1FAFF', date: '#A9D9F0', hint: '#A9C6D9', track: '#36536A', ring: '#D9F4FF', hintTop: 344 },
-    heart: { clock: '#F4EBD7', date: '#E9C99A', hint: '#9DBFA6', track: '#2E5E43', ring: '#D93A3A', hintTop: 344 },
-    candy: { clock: '#B3122E', date: '#2E8B57', hint: '#C46B7D', track: '#F7C5CF', ring: '#D7263D', hintTop: 344 },
+    synthwave: { clock: '#FFD4F7', date: '#A4F5FF', hint: '#D6B2F2', track: '#321841', ring: '#3DD6F5', hintTop: 342, bg: '#241040', rim: '#FF53BB' },
+    'flower-power': { clock: '#43223B', date: '#6C304A', hint: '#3D5C4E', track: '#43223B', ring: '#3DD6F5', hintTop: 348, bg: '#FFE9BA', rim: '#43223B', rimStyle: 'flower', ink: '#43223B' },
+    christmas: { clock: '#FFF9E8', date: '#FFD58D', hint: '#A6C3B4', track: '#29443A', ring: '#FFD58D', hintTop: 344, bg: '#112A25', rim: '#36554A' },
+    nineties: { clock: '#FFF2B0', date: '#63EBD0', hint: '#EFA7DB', track: '#473466', ring: '#FF69B4', hintTop: 344, bg: '#211638', rim: '#7A59C9' },
+    reindeer: { clock: '#F1FAFF', date: '#A9D9F0', hint: '#A9C6D9', track: '#36536A', ring: '#D9F4FF', hintTop: 344, bg: '#102B43', rim: '#527897' },
+    heart: { clock: '#F4EBD7', date: '#E9C99A', hint: '#9DBFA6', track: '#2E5E43', ring: '#D93A3A', hintTop: 344, bg: '#163A2A', rim: '#0E2A1D', rimStyle: 'stitch' },
+    candy: { clock: '#B3122E', date: '#2E8B57', hint: '#C46B7D', track: '#F7C5CF', ring: '#D7263D', hintTop: 344, bg: '#FFF3E8', rim: '#D7263D', rimStyle: 'candy', ink: '#8A2A3A' },
   };
   const SYNTH_GRID_COLORS = ['#A43983', '#7051B1', '#368DA2', '#6357AD'];
   const SYNTH_RING_COLORS = ['#FF53BB', '#A685FF', '#54E8F7', '#FFAB6B'];
@@ -80,7 +80,7 @@
   // ---- Core logic (port of lib/brush_core/src/brush_core.c) --------------------------------
   class BrushCore {
     constructor(cfg) {
-      this.cfg = Object.assign({ durationMs: 120000, markMs: 30000, autoClearMs: 60000, finishHoldMs: 6000 }, cfg || {});
+      this.cfg = Object.assign({ durationMs: 120000, markMs: 30000, autoClearMs: 6000, finishHoldMs: 6000 }, cfg || {});
       this.timers = [];
     }
     get count() { return this.timers.length; }
@@ -89,7 +89,8 @@
     addAt(now, elapsedMs, source) {
       if (this.timers.length >= MAX_TIMERS) return -1;
       let color = 0;
-      while (this.timers.some(t => t.color === color)) color++;
+      if (this.timers.length === 0) color = (this.firstColor || 0) % MAX_TIMERS; // random in the simulator
+      else while (this.timers.some(t => t.color === color)) color++;
       this.nextId = ((this.nextId || 0) % 65535) + 1;
       this.timers.push({
         state: elapsedMs >= this.cfg.durationMs ? 'done' : 'running', start: now - elapsedMs, pausedTotal: 0,
@@ -518,17 +519,19 @@
   // ---- Main screen (mirrors src/ui/ui.cpp, driven by BrushScene) ---------------------------
   const clamp01 = v => Math.max(0, Math.min(1, v));
 
-  function cardContent(core, i, now, countUp, txt) {
+  function cardContent(core, i, now, countUp, txt, ink) {
     const t = core.timers[i];
     const quads = [0, 1, 2, 3].map(q => core.quadrantPermille(i, q, now));
     const { secs } = core.displaySeconds(i, now, countUp);
     const oralb = t.source === 'oralb';
     const tooHard = oralb && t.pressureHigh && t.state === 'running';
     const status = t.state === 'paused' ? txt.paused : t.state === 'done' ? txt.done
-      : tooHard ? txt.tooHard : txt.quadrants[core.currentQuadrant(i, now)];
+      : tooHard ? txt.tooHard : ''; // quadrant names hidden for now (mirrors ui.cpp)
     const smiley = t.state === 'done' || t.finishing;
-    const color = TIMER_COLORS[t.color % MAX_TIMERS];
-    return { id: t.id, state: t.state, color, quads, text: formatMMSS(secs), status, oralb, tooHard, smiley };
+    // Light dials (palette.ink): timer colors darkened 30 % (card_color() in ui.cpp).
+    const base = TIMER_COLORS[t.color % MAX_TIMERS];
+    const color = ink ? mix(base, '#000000', 0.7) : base;
+    return { id: t.id, state: t.state, color, quads, text: formatMMSS(secs), status, oralb, tooHard, smiley, ink };
   }
 
   // ---- Finish smiley (mirrors draw_smiley() in src/ui/ui.cpp and preview/smileys.html) --------
@@ -541,6 +544,7 @@
     const opa = clamp01(g.opa);
     const { color, oralb } = content;
     const t = Math.max(0, now - content.smileyStart);
+    const gold = content.ink ? '#D99A1E' : SMILEY.gold;
     const phase = (start, dur) => clamp01((t - start) / dur);
     const wave = start => t < start ? 0 : 0.5 - 0.5 * Math.cos(2 * Math.PI * ((t - start) % SMILEY.loopMs) / SMILEY.loopMs);
     const arcW = Math.max(6, idiv(r * 85, 1000));
@@ -550,7 +554,7 @@
     // Digits, status and toothbrush icon fade out.
     const contentOpa = clamp01(1 - t / SMILEY.contentOutMs) * opa;
     if (contentOpa > 0.01) {
-      if (oralb) s += brushIcon(cx, cy - idiv(r * 48, 100), idiv(r * 46, 100), color, '#FFFFFF', contentOpa);
+      if (oralb) s += brushIcon(cx, cy - idiv(r * 48, 100), idiv(r * 46, 100), color, content.ink || '#FFFFFF', contentOpa);
       const digitH = idiv(r * 46, 100), digitsCy = cy - idiv(r * 6, 100);
       s += segCentered(cx, digitsCy - idiv(digitH, 2), digitH, content.frozenText, color, contentOpa);
       s += text(cx, digitsCy + idiv(digitH, 2) + idiv(r * 18, 100), r >= 120 ? 20 : 14, color, content.frozenStatus, 500, contentOpa);
@@ -589,7 +593,7 @@
           const rr = (j % 2 ? 8 : 19.5) * sc, a = (j * 36 - 90 + 18 * tw) * Math.PI / 180;
           d += (j ? 'L' : 'M') + fmt(px(x + rr * Math.cos(a), y + rr * Math.sin(a)));
         }
-        s += `<path d="${d}Z" fill="${SMILEY.gold}" fill-opacity="${opa.toFixed(3)}"/>`;
+        s += `<path d="${d}Z" fill="${gold}" fill-opacity="${opa.toFixed(3)}"/>`;
       } else {
         const [ex, ey] = px(x, y);
         s += `<circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="${(11 * pop * k).toFixed(2)}" fill="${color}" fill-opacity="${opa.toFixed(3)}"/>`;
@@ -621,7 +625,7 @@
         if (w <= 0.02) continue;
         const l = 9 * (0.3 + 0.7 * w), n = 2 * (0.3 + 0.7 * w);
         const pts = [[0, -l], [n, -n], [l, 0], [n, n], [0, l], [-n, n], [-l, 0], [-n, -n]];
-        s += `<path d="M${pts.map(([dx, dy]) => fmt(px(x + dx, y + dy))).join(' L')}Z" fill="${SMILEY.gold}" fill-opacity="${(w * opa).toFixed(3)}"/>`;
+        s += `<path d="M${pts.map(([dx, dy]) => fmt(px(x + dx, y + dy))).join(' L')}Z" fill="${gold}" fill-opacity="${(w * opa).toFixed(3)}"/>`;
       }
     }
     return s;
@@ -658,15 +662,15 @@
       if (state !== 'done') {
         const pr = r - arcW - Math.max(4, idiv(r * 5, 100));
         s += arcPath(cx, cy, pr, Math.max(3, idiv(r * 25, 1000)), 0, 360,
-          tooHard ? COLOR_PRESSURE_HIGH : COLOR_PRESSURE_OK, (tooHard ? 1 : PRESSURE_OK_OPA) * opa);
+          tooHard ? COLOR_PRESSURE_HIGH : content.ink || COLOR_PRESSURE_OK, (tooHard ? 1 : PRESSURE_OK_OPA) * opa);
       }
-      s += brushIcon(cx, cy - idiv(r * 48, 100), idiv(r * 46, 100), dimmed, tooHard ? COLOR_PRESSURE_HIGH : '#FFFFFF', opa);
+      s += brushIcon(cx, cy - idiv(r * 48, 100), idiv(r * 46, 100), dimmed, tooHard ? COLOR_PRESSURE_HIGH : content.ink || '#FFFFFF', opa);
     }
     const digitH = idiv(r * 46, 100);
     const digitsCy = cy - idiv(r * 6, 100);
     s += segCentered(cx, digitsCy - idiv(digitH, 2), digitH, content.text, dimmed, opa);
     const fontSize = r >= 120 ? 20 : 14;
-    const statusColor = tooHard ? COLOR_PRESSURE_HIGH : state === 'running' ? COLOR_MUTED : color;
+    const statusColor = tooHard ? COLOR_PRESSURE_HIGH : state === 'running' ? content.ink || COLOR_MUTED : color;
     s += text(cx, digitsCy + idiv(digitH, 2) + idiv(r * 18, 100), fontSize, statusColor, content.status, 500, opa);
     return s;
   }
@@ -1093,6 +1097,21 @@
     const ringOpa = idleOpa * (1 - ringFade);
     const palette = FACE_PALETTE[face];
     const themed = key => face === 'classic' ? palette[key] : mix(palette[key], FACE_PALETTE.classic[key], themeOpa);
+    // While timers run, the decorated face fades into a plain dial in the face's colors (draw_timer_bg()).
+    if (palette.bg && idleOpa < 0.99) {
+      const a = 1 - idleOpa;
+      const candyRim = palette.rimStyle === 'candy';
+      s += `<g class="timer-bg" opacity="${a.toFixed(3)}"><circle cx="240" cy="240" r="${candyRim ? 214 : 219}" fill="${palette.bg}"` +
+        (candyRim ? '/>' : ` stroke="${palette.rim}" stroke-width="4"/>`);
+      if (candyRim) {
+        for (let deg = 0; deg < 360; deg += 8) s += arcPath(240, 240, 221, 6, deg, deg + 8, (deg / 8) % 2 ? CANDY.white : CANDY.red, 1, 'butt');
+      } else if (palette.rimStyle === 'stitch') {
+        for (let deg = 0; deg < 360; deg += 6) s += arcPath(240, 240, 212, 2, deg, deg + 3, '#F1E6CC', 1, 'butt');
+      } else if (palette.rimStyle === 'flower') {
+        s += arcPath(240, 240, 217, 4, 0, 360, FLOWER.gold, 1);
+      }
+      s += '</g>';
+    }
     if (synth > 0.01) s += synthBackdrop(synth, t);
     if (flowerFace && themeOpa > 0.01) s += flowerBackdrop(themeOpa, ringOpa, date.getSeconds());
     if (christmasFace && themeOpa > 0.01) s += christmasBackdrop(themeOpa);
@@ -1136,7 +1155,7 @@
       const i = core.timers.findIndex(tm => tm.color === c);
       if (i >= 0) {
         const prev = scene.content[c];
-        const next = cardContent(core, i, now, countUp, txt);
+        const next = cardContent(core, i, now, countUp, txt, palette.ink);
         if (next.smiley) {
           const same = prev && prev.id === next.id;
           if (same && prev.smiley) {

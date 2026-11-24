@@ -13,6 +13,9 @@ void brush_init(brush_core_t *c, const brush_cfg_t *cfg)
 
 static uint8_t free_color(const brush_core_t *c)
 {
+    if (c->count == 0) {
+        return (uint8_t)(c->first_color % BRUSH_MAX_TIMERS);
+    }
     for (uint8_t color = 0; color < BRUSH_MAX_TIMERS; color++) {
         bool used = false;
         for (uint8_t i = 0; i < c->count; i++) {

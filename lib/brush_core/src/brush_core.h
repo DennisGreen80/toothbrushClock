@@ -51,6 +51,7 @@ typedef struct {
     brush_timer_t timers[BRUSH_MAX_TIMERS];
     uint8_t count; /* active timers are always packed at [0, count) */
     uint16_t next_id;
+    uint8_t first_color; /* color slot for a timer added when none are running */
 } brush_core_t;
 
 typedef enum {

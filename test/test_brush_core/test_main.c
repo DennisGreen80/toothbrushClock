@@ -107,6 +107,15 @@ static void test_millis_wraparound(void)
     TEST_ASSERT_EQUAL_INT(BEV_MARK, ev[0].type);
 }
 
+static void test_first_color_is_used_only_when_no_timers_run(void)
+{
+    core.first_color = 2;
+    TEST_ASSERT_EQUAL_INT(0, brush_add(&core, 0));
+    TEST_ASSERT_EQUAL_UINT8(2, core.timers[0].color);
+    brush_add(&core, 0);
+    TEST_ASSERT_EQUAL_UINT8(0, core.timers[1].color); /* then the lowest free slot */
+}
+
 static void test_rating_thresholds(void)
 {
     brush_add(&core, 0);
@@ -487,6 +496,7 @@ int main(void)
     RUN_TEST(test_done_timer_is_auto_cleared);
     RUN_TEST(test_auto_clear_disabled);
     RUN_TEST(test_millis_wraparound);
+    RUN_TEST(test_first_color_is_used_only_when_no_timers_run);
     RUN_TEST(test_rating_thresholds);
     RUN_TEST(test_finish_freezes_then_clears_after_hold);
     RUN_TEST(test_finish_removes_done_timer_or_without_hold);
