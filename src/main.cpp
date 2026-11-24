@@ -35,6 +35,7 @@ constexpr uint32_t SCREENSAVER_AFTER_MS = 15 * 60 * 1000;
 constexpr uint32_t BACKLIGHT_STEP_MS = 8; // per 1 % brightness change -> smooth fades
 
 constexpr uint32_t UI_UPDATE_MS = 50;
+constexpr uint16_t LONG_PRESS_MS = 400; // hold time for settings / cancelling a timer
 constexpr uint32_t RTC_RESYNC_MS = 10 * 60 * 1000;
 constexpr int DRAW_BUF_LINES = 40;
 
@@ -175,6 +176,7 @@ void init_lvgl()
     lv_indev_drv_init(&s_indev_drv);
     s_indev_drv.type = LV_INDEV_TYPE_POINTER;
     s_indev_drv.read_cb = lvgl_touch_cb;
+    s_indev_drv.long_press_time = LONG_PRESS_MS;
     lv_indev_drv_register(&s_indev_drv);
 }
 

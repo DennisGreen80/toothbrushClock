@@ -21,7 +21,7 @@
 
 #define LV_DISP_DEF_REFR_PERIOD 20
 #define LV_INDEV_DEF_READ_PERIOD 15
-#define LV_INDEV_DEF_LONG_PRESS_TIME 700
+/* The long-press time is not an lv_conf option in LVGL 8.3; it is set on the input driver in main.cpp. */
 
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN

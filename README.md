@@ -124,7 +124,7 @@ Last timer removed – the ring shrinks away and the big clock returns:
 
 ## Using it
 
-| Where | Tap | Hold (0.7 s) |
+| Where | Tap | Hold (0.4 s) |
 | --- | --- | --- |
 | Idle clock | start a timer | open settings |
 | ⚙ gear (right of the idle clock) | open settings (set the time, mode, sound, face, language) | – |

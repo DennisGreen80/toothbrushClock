@@ -59,7 +59,7 @@
 <script src="sim.js"></script>
 <script>
   const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, renderSVG, SETTINGS_BUTTONS, PULSE, LANGS, CLOCK_FACES, SETTINGS_GEAR } = window.BrushSim;
-  const LONG_PRESS_MS = 700;
+  const LONG_PRESS_MS = 400; // mirrors LONG_PRESS_MS in src/main.cpp
   const BEZEL = 20;
   const ADV_INTERVAL_MS = 250; // simulated time between advertisements
   const OFF_ADVERTS_MS = 1000; // a switched-off brush keeps advertising "idle" briefly, then goes quiet

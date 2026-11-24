@@ -1920,11 +1920,12 @@ void settings_event_cb(lv_event_t *e)
         break;
     case TOGGLE_FONT: s_set_values.custom_font = !s_set_values.custom_font; break;
     case TOGGLE_DURATION: {
+        constexpr size_t n = sizeof(kDurations) / sizeof(kDurations[0]);
         size_t i = 0;
-        while (i < LV_ARRAY_LEN(kDurations) && kDurations[i] != s_set_values.duration_s) {
+        while (i < n && kDurations[i] != s_set_values.duration_s) {
             i++;
         }
-        s_set_values.duration_s = kDurations[(i + 1) % LV_ARRAY_LEN(kDurations)]; // unknown values restart at 2:00
+        s_set_values.duration_s = kDurations[(i + 1) % n]; // unknown values restart at 2:00
         break;
     }
     case TOGGLE_FACE:
