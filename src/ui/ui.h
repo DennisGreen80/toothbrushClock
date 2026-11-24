@@ -12,6 +12,10 @@ enum ClockFace : uint8_t {
     CLOCK_FACE_SYNTHWAVE,
     CLOCK_FACE_FLOWER_POWER,
     CLOCK_FACE_CHRISTMAS,
+    CLOCK_FACE_NINETIES,
+    CLOCK_FACE_REINDEER,
+    CLOCK_FACE_HEART,
+    CLOCK_FACE_CANDY,
     CLOCK_FACE_COUNT,
 };
 
@@ -36,4 +40,5 @@ void app_start_timer();
 void app_timer_tapped(int index);
 void app_timer_long_pressed(int index);
 void app_open_settings();
+void app_change_clock_face(bool next);
 void app_settings_done(int hour, int minute, bool time_changed, const UiSettings &settings);

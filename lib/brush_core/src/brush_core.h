@@ -33,6 +33,8 @@ typedef struct {
     uint8_t color;       /* stable color slot 0..BRUSH_MAX_TIMERS-1 */
     uint8_t source;      /* brush_source_t */
     bool held;           /* a DONE timer whose time is frozen (brush switched off) */
+    bool finishing;      /* cancelled early: frozen, shown as a rating until removed */
+    uint32_t finish_ms;  /* when `finishing` started */
     bool pressure_high;  /* Oral-B: brushing too hard right now */
     uint16_t id;         /* unique per timer, never reused while running */
 } brush_timer_t;
@@ -41,6 +43,7 @@ typedef struct {
     uint32_t duration_ms;   /* target brushing time, e.g. 120000 */
     uint32_t mark_ms;       /* feedback interval, e.g. 30000 */
     uint32_t auto_clear_ms; /* remove a finished manual timer after this much overtime, 0 = never */
+    uint32_t finish_hold_ms; /* how long a cancelled timer shows its rating, 0 = remove at once */
 } brush_cfg_t;
 
 typedef struct {
@@ -53,7 +56,7 @@ typedef struct {
 typedef enum {
     BEV_MARK = 1, /* an interval mark (30 s, 60 s, ...) was passed; `mark` is 1-based */
     BEV_DONE,     /* target duration reached */
-    BEV_CLEARED,  /* timer auto-removed after overtime; indices above `index` shifted down */
+    BEV_CLEARED,  /* timer auto-removed after overtime or its finish hold; indices above `index` shifted down */
 } brush_event_type_t;
 
 typedef struct {
@@ -71,6 +74,13 @@ int brush_add(brush_core_t *c, uint32_t now_ms);
  * Marks that already passed are not signalled again. */
 int brush_add_at(brush_core_t *c, uint32_t now_ms, uint32_t elapsed_ms, brush_source_t source);
 bool brush_remove(brush_core_t *c, int index);
+/* Ends a timer early: it freezes and stays (as `finishing`) for cfg.finish_hold_ms so its
+ * rating can be shown, then brush_tick() removes it. Finished (DONE) timers are removed at once.
+ * Returns true if the timer is now held, false if it was removed or the index is invalid. */
+bool brush_finish(brush_core_t *c, int index, uint32_t now_ms);
+/* How well the timer was brushed: 0 = under a quarter of the target, 1 = under half,
+ * 2 = up to three quarters, 3 = more (with 2:00: <30 s, 30-59 s, 60-90 s, 91-120 s). */
+uint8_t brush_rating(const brush_core_t *c, int index, uint32_t now_ms);
 /* Freezes or unfreezes a timer's time. Works for running/paused and finished timers.
  * Returns true if anything changed. */
 bool brush_set_paused(brush_core_t *c, int index, bool paused, uint32_t now_ms);

@@ -144,10 +144,42 @@ brush_state_t brush_toggle_pause(brush_core_t *c, int index, uint32_t now_ms)
     if (index < 0 || index >= c->count) {
         return BT_DONE;
     }
-    if (c->timers[index].state != BT_DONE) {
+    if (c->timers[index].state != BT_DONE && !c->timers[index].finishing) {
         brush_set_paused(c, index, c->timers[index].state == BT_RUNNING, now_ms);
     }
     return c->timers[index].state;
+}
+
+bool brush_finish(brush_core_t *c, int index, uint32_t now_ms)
+{
+    if (index < 0 || index >= c->count) {
+        return false;
+    }
+    brush_timer_t *t = &c->timers[index];
+    if (t->state == BT_DONE || c->cfg.finish_hold_ms == 0) {
+        brush_remove(c, index);
+        return false;
+    }
+    if (!t->finishing) {
+        brush_set_paused(c, index, true, now_ms);
+        t->pressure_high = false;
+        t->finishing = true;
+        t->finish_ms = now_ms;
+    }
+    return true;
+}
+
+uint8_t brush_rating(const brush_core_t *c, int index, uint32_t now_ms)
+{
+    const uint32_t seconds = brush_elapsed_ms(c, index, now_ms) / 1000u;
+    const uint32_t quarter = c->cfg.duration_ms / 1000u / BRUSH_QUADRANTS;
+    if (seconds < quarter) {
+        return 0;
+    }
+    if (seconds < 2 * quarter) {
+        return 1;
+    }
+    return seconds <= 3 * quarter ? 2 : 3;
 }
 
 uint32_t brush_elapsed_ms(const brush_core_t *c, int index, uint32_t now_ms)
@@ -188,6 +220,16 @@ int brush_tick(brush_core_t *c, uint32_t now_ms, brush_event_t *events, int max_
             t->marks_fired = reached;
             if (n < max_events) {
                 events[n++] = (brush_event_t){BEV_MARK, (uint8_t)i, reached, t->color};
+            }
+        }
+    }
+
+    for (int i = c->count - 1; i >= 0; i--) {
+        if (c->timers[i].finishing && now_ms - c->timers[i].finish_ms >= c->cfg.finish_hold_ms) {
+            uint8_t color = c->timers[i].color;
+            brush_remove(c, i);
+            if (n < max_events) {
+                events[n++] = (brush_event_t){BEV_CLEARED, (uint8_t)i, 0, color};
             }
         }
     }

@@ -25,9 +25,9 @@
 <aside>
   <h1>Toothbrush timer simulator</h1>
   <ul>
-    <li><b>Tap</b> the clock to start a timer; <b>hold</b> it to open settings</li>
+    <li><b>Tap</b> the clock to start a timer; <b>hold</b> it or tap the <b>gear</b> to open settings</li>
     <li><b>Tap</b> a ring to pause/resume (or dismiss when done)</li>
-    <li><b>Hold</b> a ring to cancel it</li>
+    <li><b>Hold</b> a ring to cancel it (its smiley shows for 6 s)</li>
     <li><b>+</b> adds another timer (up to 4)</li>
   </ul>
   <h1>Oral-B brushes (simulated BLE)</h1>
@@ -47,7 +47,7 @@
     <select id="lang"><option value="da" selected>Dansk</option><option value="en">English</option></select>
   </label>
   <label>Clock face
-    <select id="clock-face"><option value="classic">Classic</option><option value="synthwave">Synthwave</option><option value="flower-power">Flower Power</option><option value="christmas">Christmas</option></select>
+    <select id="clock-face"><option value="classic">Classic</option><option value="synthwave">Synthwave</option><option value="flower-power">Flower Power</option><option value="christmas">Christmas</option><option value="nineties">90s</option><option value="reindeer">Reindeer</option><option value="heart">Woven Heart</option><option value="candy">Candy Cane</option></select>
   </label>
   <label><input type="checkbox" id="sound" checked> Play buzzer sounds</label>
   <p><button id="reset">Reset</button></p>
@@ -55,7 +55,7 @@
 </aside>
 <script src="sim.js"></script>
 <script>
-  const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, renderSVG, SETTINGS_BUTTONS, PULSE, LANGS, CLOCK_FACES } = window.BrushSim;
+  const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, renderSVG, SETTINGS_BUTTONS, PULSE, LANGS, CLOCK_FACES, SETTINGS_GEAR } = window.BrushSim;
   const LONG_PRESS_MS = 700;
   const BEZEL = 20;
   const ADV_INTERVAL_MS = 250; // simulated time between advertisements
@@ -165,10 +165,12 @@
     simNow += dt;
     lastReal = real;
     stepBrushes(dt);
+    // The finish smiley is display time, not brushing time: hold it 6 real seconds at any speed.
+    core.cfg.finishHoldMs = 6000 * Number(document.getElementById('speed').value);
     for (const e of core.tick(simNow)) {
       if (e.type === 'mark') { beep(`mark${Math.min(e.mark, 3)}`); scene.pulse(e.color, PULSE.mark, real); }
       if (e.type === 'done') { beep('done'); scene.pulse(e.color, PULSE.done, real); }
-      if (e.type === 'cleared') log('finished timer auto-cleared');
+      if (e.type === 'cleared') log('finished timer cleared');
     }
     const saver = core.count === 0 && (forceSaver || simNow - lastActivity >= SCREENSAVER_AFTER_MS);
     if (saver !== saverTarget) {
@@ -196,7 +198,10 @@
       const b = SETTINGS_BUTTONS.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
       return b ? { kind: 'setting', id: b.id } : null;
     }
-    if (core.count === 0) return { kind: 'idle' };
+    if (core.count === 0) {
+      const gear = Math.hypot(x - SETTINGS_GEAR.cx, y - SETTINGS_GEAR.cy) <= SETTINGS_GEAR.r && saverLevel < 0.3;
+      return { kind: gear ? 'gear' : 'idle' };
+    }
     const l = layout(core.count);
     const inCircle = c => Math.hypot(x - c.cx, y - c.cy) <= c.r;
     const i = l.slots.findIndex(inCircle);
@@ -208,16 +213,21 @@
   function act(target, long) {
     if (!target) return;
     const fadeIn = () => device.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+    const openSettings = () => { const d = new Date(); settings = { hour: d.getHours(), minute: d.getMinutes(), ...prefs }; screen = 'settings'; fadeIn(); };
     switch (target.kind) {
+      case 'gear':
+        if (!long) openSettings();
+        break;
       case 'idle':
-        if (long) { const d = new Date(); settings = { hour: d.getHours(), minute: d.getMinutes(), ...prefs }; screen = 'settings'; fadeIn(); }
+        if (long) openSettings();
         else if (core.add(simNow) >= 0) beep('start');
         break;
       case 'add':
         if (!long && core.add(simNow) >= 0) beep('start');
         break;
       case 'card':
-        if (long || core.timers[target.index].state === 'done') core.remove(target.index);
+        if (long) core.finish(target.index, simNow);
+        else if (core.timers[target.index].state === 'done' || core.timers[target.index].finishing) core.remove(target.index);
         else if (core.timers[target.index].source === 'oralb') log('toothbrush timer: use the brush button');
         else core.togglePause(target.index, simNow);
         break;

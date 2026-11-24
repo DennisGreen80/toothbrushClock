@@ -58,7 +58,7 @@ static oralb_action_t pause_link(oralb_link_t *l, brush_core_t *core, uint32_t n
     l->stopped = true;
     l->stopped_ms = now_ms;
     int idx = brush_index_of_id(core, l->timer_id);
-    if (idx < 0) {
+    if (idx < 0 || core->timers[idx].finishing) {
         return ORALB_NONE;
     }
     core->timers[idx].pressure_high = false;
@@ -104,8 +104,8 @@ oralb_action_t brush_oralb_on_adv(oralb_tracker_t *t, brush_core_t *core, const 
         return ORALB_NONE;
     }
     int idx = brush_index_of_id(core, l->timer_id);
-    if (idx < 0) {
-        l->dismissed = true; /* removed by a long press; don't bring it back this session */
+    if (idx < 0 || core->timers[idx].finishing) {
+        l->dismissed = true; /* removed or cancelled by a long press; don't bring it back this session */
         return ORALB_NONE;
     }
 
@@ -139,7 +139,7 @@ oralb_action_t brush_oralb_tick(oralb_tracker_t *t, brush_core_t *core, uint32_t
         }
         if (l->stopped && now_ms - l->stopped_ms > ORALB_RESUME_WINDOW_MS) {
             int idx = brush_index_of_id(core, l->timer_id);
-            if (!l->dismissed && idx >= 0) {
+            if (!l->dismissed && idx >= 0 && !core->timers[idx].finishing) {
                 brush_remove(core, idx);
                 result = ORALB_ENDED;
             }

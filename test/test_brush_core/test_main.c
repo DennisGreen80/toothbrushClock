@@ -11,7 +11,7 @@ static brush_event_t ev[8];
 
 static void init_default(void)
 {
-    brush_cfg_t cfg = {120000, 30000, 60000};
+    brush_cfg_t cfg = {120000, 30000, 60000, 6000};
     brush_init(&core, &cfg);
 }
 
@@ -105,6 +105,52 @@ static void test_millis_wraparound(void)
     TEST_ASSERT_EQUAL_UINT32(30000, brush_elapsed_ms(&core, 0, start + 30000u));
     TEST_ASSERT_EQUAL_INT(1, brush_tick(&core, start + 30000u, ev, 8));
     TEST_ASSERT_EQUAL_INT(BEV_MARK, ev[0].type);
+}
+
+static void test_rating_thresholds(void)
+{
+    brush_add(&core, 0);
+    TEST_ASSERT_EQUAL_UINT8(0, brush_rating(&core, 0, 29999));
+    TEST_ASSERT_EQUAL_UINT8(1, brush_rating(&core, 0, 30000));
+    TEST_ASSERT_EQUAL_UINT8(1, brush_rating(&core, 0, 59999));
+    TEST_ASSERT_EQUAL_UINT8(2, brush_rating(&core, 0, 60000));
+    TEST_ASSERT_EQUAL_UINT8(2, brush_rating(&core, 0, 90999));
+    TEST_ASSERT_EQUAL_UINT8(3, brush_rating(&core, 0, 91000));
+    TEST_ASSERT_EQUAL_UINT8(3, brush_rating(&core, 0, 150000));
+}
+
+static void test_finish_freezes_then_clears_after_hold(void)
+{
+    brush_add(&core, 0);
+    brush_add(&core, 0);
+    brush_tick(&core, 45000, ev, 8);
+    TEST_ASSERT_TRUE(brush_finish(&core, 0, 45000));
+    TEST_ASSERT_TRUE(core.timers[0].finishing);
+    TEST_ASSERT_EQUAL_UINT32(45000, brush_elapsed_ms(&core, 0, 50000));
+    TEST_ASSERT_EQUAL_UINT8(1, brush_rating(&core, 0, 50000));
+    TEST_ASSERT_EQUAL_INT(BT_PAUSED, brush_toggle_pause(&core, 0, 50000)); /* taps don't resume it */
+
+    TEST_ASSERT_EQUAL_INT(0, brush_tick(&core, 50999, ev, 8));
+    TEST_ASSERT_EQUAL_UINT8(2, core.count);
+    TEST_ASSERT_EQUAL_INT(1, brush_tick(&core, 51000, ev, 8));
+    TEST_ASSERT_EQUAL_INT(BEV_CLEARED, ev[0].type);
+    TEST_ASSERT_EQUAL_UINT8(0, ev[0].color);
+    TEST_ASSERT_EQUAL_UINT8(1, core.count);
+    TEST_ASSERT_EQUAL_UINT8(1, core.timers[0].color);
+}
+
+static void test_finish_removes_done_timer_or_without_hold(void)
+{
+    brush_add(&core, 0);
+    brush_tick(&core, 120000, ev, 8);
+    TEST_ASSERT_FALSE(brush_finish(&core, 0, 120000));
+    TEST_ASSERT_EQUAL_UINT8(0, core.count);
+
+    brush_cfg_t cfg = {120000, 30000, 60000, 0};
+    brush_init(&core, &cfg);
+    brush_add(&core, 0);
+    TEST_ASSERT_FALSE(brush_finish(&core, 0, 10000));
+    TEST_ASSERT_EQUAL_UINT8(0, core.count);
 }
 
 static void test_display_seconds(void)
@@ -412,6 +458,25 @@ static void test_oralb_dismissed_timer_is_not_recreated_and_brushes_are_independ
     TEST_ASSERT_EQUAL_UINT8(2, core.count);
 }
 
+static void test_oralb_cancelled_timer_stays_frozen_and_is_not_recreated(void)
+{
+    oralb_tracker_t t;
+    brush_oralb_init(&t);
+    oralb_adv_t on = adv(true, 40, false);
+    brush_oralb_on_adv(&t, &core, BRUSH_A, &on, 0);
+    TEST_ASSERT_TRUE(brush_finish(&core, 0, 0)); /* long press */
+
+    on = adv(true, 43, false);
+    TEST_ASSERT_EQUAL_INT(ORALB_NONE, brush_oralb_on_adv(&t, &core, BRUSH_A, &on, 3000));
+    TEST_ASSERT_EQUAL_UINT32(40000, brush_elapsed_ms(&core, 0, 3000)); /* not resynced to the brush */
+    TEST_ASSERT_EQUAL_INT(1, brush_tick(&core, 6000, ev, 8));
+    TEST_ASSERT_EQUAL_UINT8(0, core.count);
+
+    on = adv(true, 46, false);
+    TEST_ASSERT_EQUAL_INT(ORALB_NONE, brush_oralb_on_adv(&t, &core, BRUSH_A, &on, 6000));
+    TEST_ASSERT_EQUAL_UINT8(0, core.count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -422,6 +487,9 @@ int main(void)
     RUN_TEST(test_done_timer_is_auto_cleared);
     RUN_TEST(test_auto_clear_disabled);
     RUN_TEST(test_millis_wraparound);
+    RUN_TEST(test_rating_thresholds);
+    RUN_TEST(test_finish_freezes_then_clears_after_hold);
+    RUN_TEST(test_finish_removes_done_timer_or_without_hold);
     RUN_TEST(test_display_seconds);
     RUN_TEST(test_quadrants);
     RUN_TEST(test_layout_fits_round_screen_without_overlap);
@@ -436,5 +504,6 @@ int main(void)
     RUN_TEST(test_oralb_pause_resume_and_end);
     RUN_TEST(test_oralb_silence_pauses_and_finished_timer_freezes);
     RUN_TEST(test_oralb_dismissed_timer_is_not_recreated_and_brushes_are_independent);
+    RUN_TEST(test_oralb_cancelled_timer_stays_frozen_and_is_not_recreated);
     return UNITY_END();
 }

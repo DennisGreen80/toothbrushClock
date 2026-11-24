@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Toothbrush timer – finish smiley previews</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 32px; background: #0d0d0f; color: #c8c8cc; font: 14px/1.5 'Segoe UI', Helvetica, Arial, sans-serif; }
+  h1 { font-size: 18px; color: #fff; margin: 0 0 4px; }
+  p { margin: 0 0 20px; color: #8e8e93; }
+  .grid { display: flex; flex-wrap: wrap; gap: 32px; }
+  figure { margin: 0; text-align: center; }
+  figcaption b { color: #ececec; display: block; }
+  .device { width: 300px; height: 300px; filter: drop-shadow(0 16px 32px rgba(0,0,0,.6)); }
+  .controls { margin-top: 24px; display: flex; gap: 16px; align-items: center; }
+  button { background: #1c1c1e; color: #ececec; border: 1px solid #3a3a3c; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: #2c2c2e; }
+
+  .digits { transform-box: fill-box; transform-origin: center; animation: digits-out .35s ease-in forwards; }
+  .eye { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: pop .4s cubic-bezier(.3,1.6,.5,1) forwards; }
+  .mouth { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .45s 1.3s ease-out forwards; }
+  .star { animation: pop .5s cubic-bezier(.3,1.6,.5,1) forwards, twinkle 1.6s ease-in-out infinite; }
+  .sparkle { opacity: 0; transform-box: fill-box; transform-origin: center; animation: sparkle 1.6s ease-in-out infinite; }
+  .face { transform-box: fill-box; transform-origin: center; animation: bounce .5s 1.8s ease-out; }
+
+  @keyframes digits-out { to { opacity: 0; transform: scale(.6); } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes pop { to { transform: scale(1); } }
+  @keyframes twinkle { 0%, 100% { transform: scale(1) rotate(0deg); } 50% { transform: scale(1.18) rotate(18deg); } }
+  @keyframes sparkle { 0%, 100% { opacity: 0; transform: scale(.3); } 50% { opacity: 1; transform: scale(1); } }
+  @keyframes bounce { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.06); } }
+</style>
+</head>
+<body>
+<h1>Finish smiley – how well did you brush?</h1>
+<p>When a timer finishes, the digits fade and the timer ring contracts into the smiley's head; the face then rates the brushing.
+  The face uses the timer's own color (one of each shown here); star eyes and sparkles are gold.</p>
+<div class="grid" id="grid"></div>
+<div class="controls">
+  <button id="replay">Replay</button>
+  <label><input type="checkbox" id="loop" checked> Loop every 5 s</label>
+</div>
+<script>
+  const TIMER_COLORS = ['#3DD6F5', '#FF7AB6', '#FFC24B', '#9B8CFF'], GOLD = '#FFD58D', TRACK_OPA = 40 / 255;
+  const SMILE = 'M184 262 A62 62 0 0 0 296 262';
+  const MORPH_DELAY = 200, MORPH_MS = 700;
+  const TIERS = [
+    { seconds: 24, title: 'Under 30 s', text: 'Straight mouth', mouth: 'M195 292 L285 292' },
+    { seconds: 45, title: '30–59 s', text: 'Half smile (right side)', mouth: 'M195 292 L248 292 A36 36 0 0 0 284 256' },
+    { seconds: 75, title: '60–90 s', text: 'Smile', mouth: SMILE },
+    { seconds: 120, title: '91–120 s', text: 'Smile with star eyes', mouth: SMILE, stars: true },
+  ];
+
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const ease = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  const polar = (r, deg) => [240 + r * Math.cos(deg * Math.PI / 180), 240 + r * Math.sin(deg * Math.PI / 180)];
+  function arcD(r, from, to) {
+    if (to - from < 0.01) return '';
+    const [x1, y1] = polar(r, from), [x2, y2] = polar(r, to);
+    return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${r.toFixed(1)} ${r.toFixed(1)} 0 ${to - from > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  }
+
+  // Ring geometry at morph progress t: the four quadrant arcs shrink to the head radius,
+  // their gaps close and every quadrant fills, ending as one solid circle.
+  function ringPaths(seconds, t) {
+    const r = lerp(205, 125, t), width = lerp(16, 10, t), gap = lerp(6, 0, t);
+    let track = '', fill = '';
+    for (let q = 0; q < 4; q++) {
+      const start = -90 + q * 90 + gap, span = 90 - 2 * gap;
+      const brushed = Math.max(0, Math.min(1, (seconds - q * 30) / 30));
+      track += arcD(r, start, start + span);
+      fill += arcD(r, start, start + span * lerp(brushed, 1, t));
+    }
+    return { track, fill, width, trackOpa: lerp(TRACK_OPA, 0, t) };
+  }
+
+  function star(cx, cy, delay, color) {
+    let d = '';
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 7 : 18, a = (i * 36 - 90) * Math.PI / 180;
+      d += `${i ? 'L' : 'M'}${(cx + r * Math.cos(a)).toFixed(1)} ${(cy + r * Math.sin(a)).toFixed(1)}`;
+    }
+    return `<path class="eye star" style="animation-delay:${delay}s,${delay + .6}s" d="${d}Z" fill="${color}" stroke="${color}" stroke-width="3" stroke-linejoin="round"/>`;
+  }
+  function sparkle(cx, cy, delay, color) {
+    return `<path class="sparkle" style="animation-delay:${delay}s" d="M${cx} ${cy - 9}L${cx + 2} ${cy - 2}L${cx + 9} ${cy}L${cx + 2} ${cy + 2}L${cx} ${cy + 9}L${cx - 2} ${cy + 2}L${cx - 9} ${cy}L${cx - 2} ${cy - 2}Z" fill="${color}"/>`;
+  }
+  function device(tier, COLOR) {
+    const mm = `${Math.floor(tier.seconds / 60)}:${String(tier.seconds % 60).padStart(2, '0')}`;
+    const eyes = tier.stars ? star(203, 215, 1.0, GOLD) + star(277, 215, 1.1, GOLD)
+      : `<circle class="eye" style="animation-delay:1s" cx="203" cy="215" r="11" fill="${COLOR}"/>` +
+        `<circle class="eye" style="animation-delay:1.1s" cx="277" cy="215" r="11" fill="${COLOR}"/>`;
+    const sparkles = tier.stars ? sparkle(130, 140, 2.0, GOLD) + sparkle(352, 150, 2.5, GOLD) +
+      sparkle(345, 340, 3.0, GOLD) + sparkle(128, 330, 2.3, GOLD) : '';
+    return `<svg class="device" viewBox="0 0 520 520" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="260" cy="260" r="258" fill="#1a1a1c"/>
+      <g transform="translate(20 20)">
+        <circle cx="240" cy="240" r="240" fill="#000"/>
+        <text class="digits" x="240" y="262" text-anchor="middle" font-size="64" font-weight="600" fill="${COLOR}"
+          font-family="Montserrat, 'Segoe UI', Arial, sans-serif">${mm}</text>
+        <g class="face">
+          <path class="track" fill="none" stroke="${COLOR}" stroke-linecap="round"/>
+          <path class="fill" fill="none" stroke="${COLOR}" stroke-linecap="round"/>
+          ${eyes}
+          <path class="mouth" pathLength="1" d="${tier.mouth}" fill="none" stroke="${COLOR}" stroke-width="10" stroke-linecap="round"/>
+        </g>
+        ${sparkles}
+      </g>
+    </svg>`;
+  }
+
+  let startMs = 0, raf = 0;
+  function frame(now) {
+    const t = ease(Math.max(0, Math.min(1, (now - startMs - MORPH_DELAY) / MORPH_MS)));
+    document.querySelectorAll('figure').forEach((fig, i) => {
+      const p = ringPaths(TIERS[i].seconds, t);
+      for (const [cls, d, opa] of [['track', p.track, p.trackOpa], ['fill', p.fill, 1]]) {
+        const el = fig.querySelector('.' + cls);
+        el.setAttribute('d', d);
+        el.setAttribute('stroke-width', p.width.toFixed(2));
+        el.setAttribute('stroke-opacity', opa.toFixed(3));
+      }
+    });
+    if (document.getElementById('loop').checked && now - startMs > 5000) return play();
+    raf = requestAnimationFrame(frame);
+  }
+  function play() {
+    cancelAnimationFrame(raf);
+    document.getElementById('grid').innerHTML = TIERS.map((t, i) =>
+      `<figure>${device(t, TIMER_COLORS[i])}<figcaption><b>${t.title}</b>${t.text} (brushed ${t.seconds} s)</figcaption></figure>`).join('');
+    startMs = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+  document.getElementById('replay').onclick = play;
+  play();
+</script>
+</body>
+</html>

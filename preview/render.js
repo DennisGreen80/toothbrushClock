@@ -38,7 +38,7 @@ const scenes = lang => ({
   '3-two-timers': { screen: 'main', core: coreWith([{ elapsed: 78 }, { elapsed: 21 }]) },
   '4-three-timers': { screen: 'main', core: coreWith([{ elapsed: 104 }, { elapsed: 66, pausedFor: 12 }, { elapsed: 9 }]) },
   '5-four-timers': { screen: 'main', core: coreWith([{ elapsed: 128 }, { elapsed: 95 }, { elapsed: 52 }, { elapsed: 14 }]) },
-  '6-done': { screen: 'main', core: coreWith([{ elapsed: 128 }]) },
+  '6-done': { screen: 'main', core: coreWith([{ elapsed: 128 }]), smileyAgeMs: 3000 },
   '7-count-up-mode': { screen: 'main', core: coreWith([{ elapsed: 47 }]), countUp: true },
   '8-settings': { screen: 'settings', settings: { hour: 7, minute: 42, countUp: false, sound: true, lang } },
   '9-oralb-brushing': { screen: 'main', core: coreWith([{ elapsed: 38, oralb: {} }]) },
@@ -49,6 +49,13 @@ const scenes = lang => ({
   '14-synthwave': { screen: 'main', core: new BrushCore(), clockFace: 'synthwave' },
   '15-flower-power': { screen: 'main', core: new BrushCore(), clockFace: 'flower-power' },
   '16-christmas': { screen: 'main', core: new BrushCore(), clockFace: 'christmas',
+    date: new Date(2026, 11, 24, 7, 42, 18, 400) },
+  '17-nineties': { screen: 'main', core: new BrushCore(), clockFace: 'nineties' },
+  '18-reindeer': { screen: 'main', core: new BrushCore(), clockFace: 'reindeer',
+    date: new Date(2026, 11, 24, 7, 42, 18, 400) },
+  '19-woven-heart': { screen: 'main', core: new BrushCore(), clockFace: 'heart',
+    date: new Date(2026, 11, 24, 7, 42, 18, 400) },
+  '20-candy-cane': { screen: 'main', core: new BrushCore(), clockFace: 'candy',
     date: new Date(2026, 11, 24, 7, 42, 18, 400) },
 });
 

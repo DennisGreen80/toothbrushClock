@@ -14,7 +14,6 @@ namespace {
 
 // ---- Look & feel (mirrored in preview/sim.js) ----------------------------------------
 const uint32_t kTimerColors[BRUSH_MAX_TIMERS] = {0x3DD6F5, 0xFF7AB6, 0xFFC24B, 0x9B8CFF};
-constexpr uint32_t COLOR_DONE = 0x4ADE80;
 constexpr uint32_t COLOR_TEXT = 0xECECEC;
 constexpr uint32_t COLOR_MUTED = 0x8E8E93;
 constexpr uint32_t COLOR_FAINT = 0x5A5A5E;
@@ -48,6 +47,24 @@ constexpr uint32_t CHRISTMAS_GOLD = 0xFFD58D;
 constexpr uint32_t CHRISTMAS_SNOW = 0xFFF9E8;
 constexpr uint32_t CHRISTMAS_TRACK = 0x29443A;
 constexpr lv_coord_t CHRISTMAS_HINT_TOP = 344;
+constexpr uint32_t CANDY_RED = 0xD7263D, CANDY_WHITE = 0xFFFFFF;
+
+// Per-face text and seconds-ring colors, indexed by ClockFace (mirrored in preview/sim.js).
+struct FacePalette {
+    uint32_t clock, date, hint, track, ring;
+    lv_coord_t hint_top;
+};
+const FacePalette kFacePalettes[CLOCK_FACE_COUNT] = {
+    {COLOR_TEXT, COLOR_MUTED, COLOR_FAINT, 0x1A1A1C, 0x3DD6F5, 372},                 // classic
+    {SYNTH_CLOCK, SYNTH_DATE, SYNTH_HINT, SYNTH_TRACK, 0x3DD6F5, SYNTH_HINT_TOP},     // synthwave
+    {FLOWER_INK, 0x6C304A, 0x3D5C4E, FLOWER_INK, 0x3DD6F5, FLOWER_HINT_TOP},         // flower power
+    {CHRISTMAS_SNOW, CHRISTMAS_GOLD, 0xA6C3B4, CHRISTMAS_TRACK, CHRISTMAS_GOLD, CHRISTMAS_HINT_TOP},
+    {0xFFF2B0, 0x63EBD0, 0xEFA7DB, 0x473466, 0xFF69B4, CHRISTMAS_HINT_TOP},          // 90s
+    {0xF1FAFF, 0xA9D9F0, 0xA9C6D9, 0x36536A, 0xD9F4FF, CHRISTMAS_HINT_TOP},          // reindeer
+    {0xF4EBD7, 0xE9C99A, 0x9DBFA6, 0x2E5E43, 0xD93A3A, CHRISTMAS_HINT_TOP},          // woven heart
+    {0xB3122E, 0x2E8B57, 0xC46B7D, 0xF7C5CF, CANDY_RED, CHRISTMAS_HINT_TOP},         // candy cane
+};
+constexpr lv_coord_t GEAR_CX = 432, GEAR_CY = 240, GEAR_SIZE = 44;
 constexpr uint32_t SCREENSAVER_TRANSITION_MS = 1400;
 constexpr uint32_t SCREENSAVER_COLOR_CYCLE_MS = 64000;
 constexpr uint32_t SCREENSAVER_COLOR_SEGMENT_MS = SCREENSAVER_COLOR_CYCLE_MS / BRUSH_MAX_TIMERS;
@@ -85,9 +102,16 @@ constexpr uint16_t PULSE_MARK_AMP = 30, PULSE_MARK_MS = 380;
 constexpr uint16_t PULSE_DONE_AMP = 80, PULSE_DONE_MS = 650;
 constexpr uint16_t PULSE_PRESSURE_AMP = 22, PULSE_PRESSURE_MS = 300;
 
-LV_FONT_DECLARE(tb_font_14)
-LV_FONT_DECLARE(tb_font_20)
-LV_FONT_DECLARE(tb_font_28)
+// Finish smiley (mirrors preview/smileys.html). Times are ms after the timer finished.
+constexpr uint32_t SMILEY_GOLD = 0xFFD58D;
+constexpr uint32_t SMILEY_CONTENT_OUT_MS = 350;               // digits and status fade out
+constexpr uint32_t SMILEY_MORPH_DELAY_MS = 200, SMILEY_MORPH_MS = 700; // ring contracts into the head
+constexpr uint32_t SMILEY_EYE_MS[2] = {1000, 1100}, SMILEY_EYE_POP_MS = 400;
+constexpr uint32_t SMILEY_MOUTH_MS = 1300, SMILEY_MOUTH_DRAW_MS = 450;
+constexpr uint32_t SMILEY_BOUNCE_MS = 1800, SMILEY_BOUNCE_DUR_MS = 500;
+constexpr uint32_t SMILEY_INTRO_MS = SMILEY_BOUNCE_MS + SMILEY_BOUNCE_DUR_MS;
+constexpr uint32_t SMILEY_LOOP_MS = 1600; // star twinkle and sparkle cycle
+constexpr float SMILEY_UNIT = 213.0f;     // preview ring outer radius; face geometry is in these units
 
 const brush_strings_t *s_txt = brush_strings(BRUSH_LANG_EN); // active language
 
@@ -99,12 +123,20 @@ struct Card {
     lv_obj_t *status;
     lv_obj_t *icon;     // toothbrush, Oral-B timers only
     lv_obj_t *pressure; // inner ring, Oral-B timers only
+    lv_obj_t *face;     // finish smiley, drawn by draw_smiley()
     lv_coord_t cx, cy, r; // last applied geometry
+    lv_coord_t arc_w;
+    int half_gap;
     lv_opa_t opa;
+    lv_opa_t content_opa; // digits/status/icon, faded out when the smiley appears
     int8_t state;   // last shown timer state (kept while fading out)
     uint32_t color; // last shown color
     bool oralb;     // last shown source
     bool pressure_high;
+    bool smiley;
+    uint8_t rating;          // brush_rating() when the smiley appeared
+    uint16_t quad_fill[BRUSH_QUADRANTS]; // ring fill when the smiley appeared
+    uint32_t smiley_ms, smiley_now;
 };
 
 brush_core_t *s_core = nullptr;
@@ -122,12 +154,18 @@ int s_flower_second = 0;
 lv_point_t s_flower_marks[FLOWER_MARKS];
 lv_obj_t *s_christmas_backdrop = nullptr;
 lv_opa_t s_christmas_opa = LV_OPA_TRANSP;
+lv_obj_t *s_extra_backdrop = nullptr;
+lv_opa_t s_extra_opa = LV_OPA_TRANSP;
+ClockFace s_extra_face = CLOCK_FACE_NINETIES;
+lv_opa_t s_candy_opa = LV_OPA_TRANSP; // candy-cane striped seconds ring
 ClockFace s_hint_face = CLOCK_FACE_CLASSIC;
 lv_obj_t *s_clock = nullptr;
 lv_coord_t s_clock_h = -1, s_clock_top = -1;
 lv_obj_t *s_seconds_arc = nullptr;
 lv_obj_t *s_date = nullptr;
 lv_obj_t *s_hint = nullptr;
+lv_obj_t *s_gear = nullptr;
+lv_obj_t *s_gear_icon = nullptr;
 lv_opa_t s_idle_opa = 0;
 char s_date_text[40] = "";
 lv_coord_t s_clock_x = -1, s_clock_y = -1;
@@ -222,6 +260,15 @@ void idle_event_cb(lv_event_t *e)
         app_start_timer();
     } else if (code == LV_EVENT_LONG_PRESSED) {
         app_open_settings();
+    } else if (code == LV_EVENT_GESTURE) {
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev) {
+            const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
+            if (direction == LV_DIR_LEFT || direction == LV_DIR_RIGHT) {
+                lv_indev_wait_release(indev);
+                app_change_clock_face(direction == LV_DIR_LEFT);
+            }
+        }
     }
 }
 
@@ -241,6 +288,8 @@ void card_event_cb(lv_event_t *e)
 
 void add_event_cb(lv_event_t *) { app_start_timer(); }
 
+void gear_event_cb(lv_event_t *) { app_open_settings(); }
+
 // ---- Idle clock ------------------------------------------------------------------------
 
 lv_color_t synth_palette_color(const uint32_t (&colors)[4], float progress)
@@ -253,7 +302,7 @@ lv_color_t synth_palette_color(const uint32_t (&colors)[4], float progress)
 
 void draw_synth_ring(lv_event_t *e)
 {
-    if (s_synth_opa <= LV_OPA_MIN) {
+    if (s_synth_opa <= LV_OPA_MIN && s_candy_opa <= LV_OPA_MIN) {
         return;
     }
     lv_obj_draw_part_dsc_t *part = lv_event_get_draw_part_dsc(e);
@@ -265,21 +314,25 @@ void draw_synth_ring(lv_event_t *e)
     if (arc.opa <= LV_OPA_MIN) {
         return;
     }
+    const int first = lv_arc_get_angle_start(s_seconds_arc);
     const int sweep = lv_arc_get_angle_end(s_seconds_arc);
-    constexpr int step = 5;
+    const bool candy = s_candy_opa > LV_OPA_MIN;
+    const int step = candy ? 6 : 5;
     arc.rounded = false;
     const lv_area_t &clip = *part->draw_ctx->clip_area;
-    for (int start = 0; start < sweep; start += step) {
+    for (int start = first - first % step; start < sweep; start += step) {
+        const int from = LV_MAX(start, first);
         const int end = LV_MIN(start + step, sweep);
         lv_area_t bounds;
-        lv_draw_arc_get_area(part->p1->x, part->p1->y, part->radius, 270 + start, 270 + end,
+        lv_draw_arc_get_area(part->p1->x, part->p1->y, part->radius, 270 + from, 270 + end,
                              arc.width, true, &bounds);
         if (bounds.x2 < clip.x1 || bounds.x1 > clip.x2 || bounds.y2 < clip.y1 || bounds.y1 > clip.y2) {
             continue;
         }
         // Sample the fixed palette, not the length of the visible sweep.
-        arc.color = synth_palette_color(kSynthRingColors, (start + step * 0.5f) / 360.0f);
-        lv_draw_arc(part->draw_ctx, &arc, part->p1, part->radius, 270 + start, 270 + end);
+        arc.color = candy ? lv_color_hex((start / step) % 2 ? CANDY_WHITE : CANDY_RED)
+                          : synth_palette_color(kSynthRingColors, (start + step * 0.5f) / 360.0f);
+        lv_draw_arc(part->draw_ctx, &arc, part->p1, part->radius, 270 + from, 270 + end);
     }
 }
 
@@ -535,6 +588,266 @@ void draw_christmas_backdrop(lv_event_t *e)
     lv_draw_arc(ctx, &ground, &center, 204, 71, 109);
 }
 
+lv_point_t pt(float x, float y) { return {(lv_coord_t)lroundf(x), (lv_coord_t)lroundf(y)}; }
+
+// Danish woven Christmas heart in felt, with a bow and embroidery. Mirrors heartFace() in preview/sim.js.
+template <typename Circle, typename Line, typename Poly, typename Arc, typename Flake>
+void draw_heart_face(const Circle &circle, const Line &line, const Poly &poly, const Arc &arc, const Flake &snowflake)
+{
+    constexpr uint32_t felt = 0x163A2A, felt_rim = 0x0E2A1D, green = 0x3E8A55, cream = 0xF1E6CC;
+    constexpr uint32_t stitch_green = 0x2B6640, red = 0xD6343B, dark_red = 0x9E2229, muted = 0x7FA58B;
+    circle(240, 240, 221, felt_rim);
+    circle(240, 240, 219, felt);
+    for (int a = 0; a < 360; a += 6) {
+        arc(240, 240, 212, 2, a, a + 3, cream, false); // running stitch around the dial
+    }
+
+    // Hanging loop, partly covered by the heart and the bow.
+    poly({pt(234, 28), pt(246, 28), pt(246, 70), pt(234, 70)}, green);
+    circle(240, 34, 6, green);
+    for (int y = 32; y < 62; y += 7) {
+        line(237, y, 237, y + 4, 1, cream);
+        line(243, y, 243, y + 4, 1, cream);
+    }
+
+    // Heart: a diamond of woven strips with a half-disc lobe on each upper edge.
+    constexpr float hx = 240.0f, hy = 106.0f, d = 38.0f, lobe = d * 0.70710678f;
+    circle(lroundf(hx - d / 2), lroundf(hy - d / 2), lroundf(lobe), green);
+    circle(lroundf(hx + d / 2), lroundf(hy - d / 2), lroundf(lobe), cream);
+    // (a, b) run along the left->top and left->bottom edges.
+    const auto at = [&](float a, float b) { return pt(hx - d + (a + b) * d, hy + (b - a) * d); };
+    constexpr int n = 4;
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            const float a0 = (float)i / n, a1 = (float)(i + 1) / n, b0 = (float)j / n, b1 = (float)(j + 1) / n;
+            const bool light = (i + j) % 2 != 0;
+            poly({at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)}, light ? cream : green);
+            if (light) {
+                const lv_point_t c = at((a0 + a1) / 2, (b0 + b1) / 2);
+                line(c.x - 3, c.y, c.x + 3, c.y, 1, stitch_green);
+                line(c.x, c.y - 3, c.x, c.y + 3, 1, stitch_green);
+            }
+        }
+    }
+    // Blanket-stitch outline: around both lobes and down the two lower edges.
+    const int lobe_r = (int)lroundf(lobe) + 5;
+    for (int a = 135; a < 315; a += 15) {
+        arc(lroundf(hx - d / 2), lroundf(hy - d / 2), lobe_r, 2, a, a + 7, cream, false);
+        arc(lroundf(hx + d / 2), lroundf(hy - d / 2), lobe_r, 2, a + 90, a + 97, cream, false);
+    }
+    for (int k = 0; k < 6; k++) {
+        const float t0 = (k + 0.15f) / 6.0f, t1 = (k + 0.6f) / 6.0f;
+        constexpr float off = 3.5f; // outward along the edge normal
+        line(lroundf(hx - d + t0 * d - off), lroundf(hy + t0 * d + off),
+             lroundf(hx - d + t1 * d - off), lroundf(hy + t1 * d + off), 2, cream);
+        line(lroundf(hx + d - t0 * d + off), lroundf(hy + t0 * d + off),
+             lroundf(hx + d - t1 * d + off), lroundf(hy + t1 * d + off), 2, cream);
+    }
+
+    // Embroidery: a snowflake on the green lobe, a berry sprig on the cream one.
+    snowflake(lroundf(hx - d / 2 - 3), lroundf(hy - d / 2 - 3), 8, cream);
+    line(259, 104, 266, 78, 1, stitch_green);
+    line(263, 92, 256, 86, 1, stitch_green);
+    constexpr int berries[][2] = {{266, 76}, {270, 84}, {255, 84}, {262, 98}, {268, 94}};
+    for (const auto &b : berries) {
+        circle(b[0], b[1], 2, red);
+    }
+
+    // Bow with two felt pom-poms where the loop meets the heart.
+    poly({pt(237, 70), pt(226, 90), pt(233, 92), pt(240, 74)}, red);
+    poly({pt(243, 70), pt(254, 90), pt(247, 92), pt(240, 74)}, red);
+    circle(229, 64, 9, red);
+    circle(251, 64, 9, red);
+    circle(229, 64, 3, dark_red);
+    circle(251, 64, 3, dark_red);
+    circle(240, 68, 5, dark_red);
+    circle(236, 74, 4, 0xFAF6EE);
+    circle(244, 74, 4, 0xFAF6EE);
+
+    // Holly sprig at the bottom.
+    const auto leaf = [&](float bx, float by, float tx, float ty) {
+        const float vx = tx - bx, vy = ty - by, len = sqrtf(vx * vx + vy * vy);
+        const float nx = -vy / len * 7.0f, ny = vx / len * 7.0f;
+        poly({pt(bx, by), pt(bx + vx / 3 + nx, by + vy / 3 + ny), pt(bx + vx * 2 / 3 + nx, by + vy * 2 / 3 + ny),
+              pt(tx, ty), pt(bx + vx * 2 / 3 - nx, by + vy * 2 / 3 - ny), pt(bx + vx / 3 - nx, by + vy / 3 - ny)},
+             green);
+        line(lroundf(bx), lroundf(by), lroundf(tx), lroundf(ty), 1, stitch_green);
+    };
+    leaf(240, 398, 203, 386);
+    leaf(240, 398, 277, 386);
+    leaf(240, 398, 240, 372);
+    circle(234, 402, 5, red);
+    circle(246, 402, 5, red);
+    circle(240, 394, 5, red);
+    circle(232, 400, 1, 0xF6B0B0);
+    circle(244, 400, 1, 0xF6B0B0);
+
+    snowflake(110, 128, 7, muted);
+    snowflake(370, 128, 7, muted);
+    snowflake(98, 342, 6, muted);
+    snowflake(382, 342, 6, muted);
+}
+
+// Candy canes bent into a heart, peppermints and sprinkles. Mirrors candyFace() in preview/sim.js.
+template <typename Circle, typename Line, typename Poly, typename Arc>
+void draw_candy_face(const Circle &circle, const Line &line, const Poly &poly, const Arc &arc)
+{
+    constexpr uint32_t cream = 0xFFF3E8, rim = 0xC8102E, outline = 0xE7B9C1;
+    circle(240, 240, 221, rim);
+    circle(240, 240, 217, cream);
+
+    constexpr int sprinkles[][5] = {{126, 118, 7, -4, 0xF48FB1}, {150, 92, 7, 3, 0x7FD8BE}, {336, 94, -7, 3, 0xFFD166},
+        {360, 120, 6, 5, 0x7EC8E3}, {62, 205, 3, 7, 0xFFD166}, {418, 292, -3, 7, 0xF48FB1},
+        {112, 334, 7, 2, 0x7EC8E3}, {368, 334, -7, 2, 0x7FD8BE}, {80, 280, 6, -4, 0x7FD8BE},
+        {404, 172, -6, -4, 0xF48FB1}, {196, 52, 7, 2, 0xFFD166}, {286, 52, -7, 2, 0x7EC8E3}};
+    for (const auto &s : sprinkles) {
+        line(s[0] - s[2] / 2, s[1] - s[3] / 2, s[0] + s[2] / 2, s[1] + s[3] / 2, 4, (uint32_t)s[4]);
+    }
+
+    // Two candy canes whose hooks meet at the top: a heart.
+    constexpr int r = 18, w = 9, cy = 84, tip_y = 148;
+    for (int side = -1; side <= 1; side += 2) {
+        const int cx = 240 + side * r, outer_x = 240 + side * 2 * r;
+        // Outline first so white stripes stand out from the cream dial.
+        arc(cx, cy, r + w / 2 + 2, w + 4, 180, 360, outline, false);
+        line(outer_x, cy, 240, tip_y, w + 4, outline);
+        int stripe = 0;
+        for (int a = 180; a < 360; a += 30, stripe++) {
+            arc(cx, cy, r + w / 2, w, a, a + 30, stripe % 2 ? CANDY_WHITE : CANDY_RED, false);
+        }
+        constexpr int pieces = 8;
+        for (int k = 0; k < pieces; k++, stripe++) {
+            line(outer_x + (240 - outer_x) * k / pieces, cy + (tip_y - cy) * k / pieces,
+                 outer_x + (240 - outer_x) * (k + 1) / pieces, cy + (tip_y - cy) * (k + 1) / pieces, w,
+                 stripe % 2 ? CANDY_WHITE : CANDY_RED);
+        }
+    }
+
+    // Peppermint swirls.
+    const auto peppermint = [&](int x, int y, int pr) {
+        circle(x, y, pr + 2, CANDY_RED);
+        circle(x, y, pr, CANDY_WHITE);
+        for (int a = 0; a < 360; a += 45) {
+            arc(x, y, pr - 2, pr - 4, a, a + 22, CANDY_RED, false);
+        }
+        circle(x, y, LV_MAX(3, pr / 5), CANDY_WHITE);
+    };
+    peppermint(176, 392, 16);
+    peppermint(304, 392, 16);
+    peppermint(240, 404, 22);
+    poly({pt(214, 404), pt(204, 396), pt(204, 412)}, 0xF7C5CF); // wrapper twists
+    poly({pt(266, 404), pt(276, 396), pt(276, 412)}, 0xF7C5CF);
+}
+
+void draw_extra_backdrop(lv_event_t *e)
+{
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    const lv_area_t &box = s_extra_backdrop->coords;
+    lv_draw_rect_dsc_t rect;
+    lv_draw_rect_dsc_init(&rect);
+    rect.bg_opa = s_extra_opa;
+    const auto circle = [&](int x, int y, int r, uint32_t color) {
+        rect.radius = LV_RADIUS_CIRCLE;
+        rect.bg_color = lv_color_hex(color);
+        const lv_area_t area = {(lv_coord_t)(box.x1 + x - r), (lv_coord_t)(box.y1 + y - r),
+                                (lv_coord_t)(box.x1 + x + r), (lv_coord_t)(box.y1 + y + r)};
+        lv_draw_rect(ctx, &rect, &area);
+    };
+    lv_draw_line_dsc_t stroke;
+    lv_draw_line_dsc_init(&stroke);
+    stroke.opa = s_extra_opa;
+    const auto line = [&](int x, int y, int end_x, int end_y, int width, uint32_t color) {
+        stroke.width = width;
+        stroke.color = lv_color_hex(color);
+        const lv_point_t a = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
+        const lv_point_t b = {(lv_coord_t)(box.x1 + end_x), (lv_coord_t)(box.y1 + end_y)};
+        lv_draw_line(ctx, &stroke, &a, &b);
+    };
+    lv_draw_rect_dsc_t fill;
+    lv_draw_rect_dsc_init(&fill);
+    fill.bg_opa = s_extra_opa;
+    // Convex polygons only (LVGL limitation).
+    const auto poly = [&](std::initializer_list<lv_point_t> points, uint32_t color) {
+        lv_point_t abs_points[8];
+        uint16_t n = 0;
+        for (const lv_point_t &p : points) {
+            abs_points[n++] = {(lv_coord_t)(box.x1 + p.x), (lv_coord_t)(box.y1 + p.y)};
+        }
+        fill.bg_color = lv_color_hex(color);
+        lv_draw_polygon(ctx, &fill, abs_points, n);
+    };
+    lv_draw_arc_dsc_t arc_dsc;
+    lv_draw_arc_dsc_init(&arc_dsc);
+    arc_dsc.opa = s_extra_opa;
+    // `r` is the outer radius, like lv_draw_arc().
+    const auto arc = [&](int x, int y, int r, int width, int start, int end, uint32_t color, bool rounded) {
+        arc_dsc.color = lv_color_hex(color);
+        arc_dsc.width = (lv_coord_t)width;
+        arc_dsc.rounded = rounded;
+        const lv_point_t c = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
+        lv_draw_arc(ctx, &arc_dsc, &c, (uint16_t)r, (uint16_t)start, (uint16_t)end);
+    };
+    const auto snowflake = [&](int x, int y, int r, uint32_t color) {
+        const int d = r * 7 / 8, h = r / 2;
+        line(x, y - r, x, y + r, 1, color);
+        line(x - d, y - h, x + d, y + h, 1, color);
+        line(x - d, y + h, x + d, y - h, 1, color);
+    };
+
+    if (s_extra_face == CLOCK_FACE_HEART) {
+        draw_heart_face(circle, line, poly, arc, snowflake);
+        return;
+    }
+    if (s_extra_face == CLOCK_FACE_CANDY) {
+        draw_candy_face(circle, line, poly, arc);
+        return;
+    }
+    if (s_extra_face == CLOCK_FACE_NINETIES) {
+        circle(240, 240, 221, 0x7A59C9);
+        circle(240, 240, 218, 0x211638);
+        constexpr int dots[][4] = {{150, 100, 5, 0xFF69B4}, {330, 100, 5, 0xFFE56D},
+            {75, 190, 4, 0x63EBD0}, {405, 205, 5, 0xFF69B4}, {105, 290, 5, 0xFFE56D},
+            {375, 295, 4, 0x63EBD0}, {160, 382, 5, 0xFF69B4}, {320, 382, 5, 0xFFE56D}};
+        for (const auto &dot : dots) circle(dot[0], dot[1], dot[2], (uint32_t)dot[3]);
+        line(192, 88, 206, 75, 4, 0x63EBD0);
+        line(206, 75, 220, 88, 4, 0x63EBD0);
+        line(220, 88, 234, 75, 4, 0x63EBD0);
+        line(252, 81, 266, 96, 4, 0xFF69B4);
+        line(266, 96, 280, 81, 4, 0xFF69B4);
+        line(280, 81, 294, 96, 4, 0xFF69B4);
+        line(189, 391, 210, 375, 4, 0xFFE56D);
+        line(210, 375, 228, 391, 4, 0xFFE56D);
+        line(252, 391, 270, 375, 4, 0x63EBD0);
+        line(270, 375, 291, 391, 4, 0x63EBD0);
+        line(120, 139, 131, 150, 3, 0xFFE56D);
+        line(131, 139, 120, 150, 3, 0xFFE56D);
+        line(349, 139, 360, 150, 3, 0x63EBD0);
+        line(360, 139, 349, 150, 3, 0x63EBD0);
+    } else {
+        circle(240, 240, 221, 0x527897);
+        circle(240, 240, 218, 0x102B43);
+        constexpr int snow[][3] = {{150, 92, 3}, {188, 65, 2}, {240, 57, 3}, {293, 67, 2},
+            {330, 94, 3}, {116, 145, 2}, {363, 145, 2}, {79, 205, 3}, {400, 205, 3},
+            {75, 274, 2}, {404, 274, 2}, {112, 325, 3}, {368, 325, 3},
+            {158, 367, 2}, {322, 367, 2}, {183, 401, 3}, {297, 401, 3}};
+        for (const auto &flake : snow) circle(flake[0], flake[1], flake[2], 0xB9DAE8);
+        constexpr uint32_t antler = 0xD8B08A;
+        line(224, 401, 209, 380, 4, antler);
+        line(209, 380, 208, 367, 4, antler);
+        line(211, 384, 198, 379, 4, antler);
+        line(256, 401, 271, 380, 4, antler);
+        line(271, 380, 272, 367, 4, antler);
+        line(269, 384, 282, 379, 4, antler);
+        circle(216, 406, 9, 0xB7794E);
+        circle(264, 406, 9, 0xB7794E);
+        circle(240, 412, 25, 0xB7794E);
+        circle(232, 408, 2, 0x172638);
+        circle(248, 408, 2, 0x172638);
+        circle(240, 421, 10, 0xE2B993);
+        circle(240, 419, 5, 0xE74F5F);
+    }
+}
+
 bool is_birthday(const struct tm &date)
 {
     for (const Birthday &birthday : kBirthdays) {
@@ -642,6 +955,13 @@ void build_idle()
     set_visible(s_christmas_backdrop, false);
     lv_obj_add_event_cb(s_christmas_backdrop, draw_christmas_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
+    s_extra_backdrop = lv_obj_create(s_view);
+    lv_obj_remove_style_all(s_extra_backdrop);
+    lv_obj_clear_flag(s_extra_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_extra_backdrop, LCD_WIDTH, LCD_HEIGHT);
+    set_visible(s_extra_backdrop, false);
+    lv_obj_add_event_cb(s_extra_backdrop, draw_extra_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
+
     s_seconds_arc = lv_arc_create(s_view);
     lv_obj_remove_style_all(s_seconds_arc);
     lv_obj_clear_flag(s_seconds_arc, LV_OBJ_FLAG_CLICKABLE);
@@ -660,6 +980,18 @@ void build_idle()
     s_date = make_label(s_view, &tb_font_28, COLOR_MUTED, "");
     s_hint = make_label(s_view, &tb_font_20, COLOR_FAINT, s_txt->hint);
     lv_obj_align(s_hint, LV_ALIGN_TOP_MID, 0, 372);
+
+    s_gear = lv_obj_create(s_view);
+    lv_obj_remove_style_all(s_gear);
+    lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_gear, GEAR_SIZE, GEAR_SIZE);
+    lv_obj_set_pos(s_gear, GEAR_CX - GEAR_SIZE / 2, GEAR_CY - GEAR_SIZE / 2);
+    lv_obj_set_style_radius(s_gear, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_gear, lv_color_white(), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(s_gear, 30, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(s_gear, gear_event_cb, LV_EVENT_CLICKED, nullptr);
+    s_gear_icon = make_label(s_gear, &tb_font_20, COLOR_FAINT, LV_SYMBOL_SETTINGS);
+    lv_obj_center(s_gear_icon);
 
     s_clock = seg_create(s_view, 100);
     seg_set_text(s_clock, "00:00");
@@ -722,6 +1054,15 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
     const bool flower = face == CLOCK_FACE_FLOWER_POWER;
     update_flower_face(flower ? theme_opa : LV_OPA_TRANSP, flower ? ring_alpha : LV_OPA_TRANSP, second);
     const bool christmas = face == CLOCK_FACE_CHRISTMAS;
+    const bool extra = face >= CLOCK_FACE_NINETIES; // drawn by draw_extra_backdrop()
+    const lv_opa_t extra_opa = extra ? theme_opa : LV_OPA_TRANSP;
+    if (extra_opa != s_extra_opa || (extra && face != s_extra_face)) {
+        s_extra_opa = extra_opa;
+        if (extra) s_extra_face = face;
+        set_visible(s_extra_backdrop, extra_opa > LV_OPA_MIN);
+        lv_obj_invalidate(s_extra_backdrop);
+    }
+    s_candy_opa = face == CLOCK_FACE_CANDY ? theme_opa : LV_OPA_TRANSP;
     const lv_opa_t christmas_opa = christmas ? theme_opa : LV_OPA_TRANSP;
     if (christmas_opa != s_christmas_opa) {
         s_christmas_opa = christmas_opa;
@@ -768,9 +1109,8 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
         s_hint_face = face;
         lv_obj_set_style_text_font(s_hint, face == CLOCK_FACE_CLASSIC ? &tb_font_20 : &tb_font_14, 0);
     }
-    const lv_coord_t hint_top = flower ? FLOWER_HINT_TOP : christmas ? CHRISTMAS_HINT_TOP
-                             : face == CLOCK_FACE_SYNTHWAVE ? SYNTH_HINT_TOP : 372;
-    const lv_coord_t hint_y = hint_top + shift_y;
+    const FacePalette &palette = kFacePalettes[face], &classic = kFacePalettes[CLOCK_FACE_CLASSIC];
+    const lv_coord_t hint_y = palette.hint_top + shift_y;
     if (shift_x != s_hint_x || hint_y != s_hint_y) {
         s_hint_x = shift_x;
         s_hint_y = hint_y;
@@ -778,36 +1118,262 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second)
     }
 
     s_idle_opa = opa;
-    const auto themed = [&](uint32_t classic, uint32_t neon, uint32_t floral, uint32_t winter) {
-        return lv_color_mix(lv_color_hex(christmas ? winter : flower ? floral : neon),
-                            lv_color_hex(classic), christmas || flower ? theme_opa : synth);
+    const auto themed = [&](uint32_t FacePalette::*field) {
+        return lv_color_mix(lv_color_hex(palette.*field), lv_color_hex(classic.*field), theme_opa);
     };
-    const lv_color_t clock_color = lv_color_mix(themed(COLOR_TEXT, SYNTH_CLOCK, FLOWER_INK, CHRISTMAS_SNOW),
-                                               lv_color_hex(COLOR_MUTED), opa);
+    const lv_color_t clock_color = lv_color_mix(themed(&FacePalette::clock), lv_color_hex(COLOR_MUTED), opa);
     seg_set_color(s_clock, lv_color_mix(clock_color, accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)));
     lv_obj_set_style_text_color(s_date,
-        lv_color_mix(themed(COLOR_MUTED, SYNTH_DATE, 0x6C304A, CHRISTMAS_GOLD), accent,
-                     (lv_opa_t)(LV_OPA_COVER - (uint16_t)saver_opa * 3 / 8)), 0);
+        lv_color_mix(themed(&FacePalette::date), accent, (lv_opa_t)(LV_OPA_COVER - (uint16_t)saver_opa * 3 / 8)), 0);
     lv_obj_set_style_text_opa(s_date, opa, 0);
     const lv_opa_t hint_opa = theme_opa;
+    const lv_color_t hint_color = themed(&FacePalette::hint);
     lv_obj_set_style_text_opa(s_hint, hint_opa, 0);
-    lv_obj_set_style_text_color(s_hint, themed(COLOR_FAINT, SYNTH_HINT, 0x3D5C4E, 0xA6C3B4), 0);
-    lv_obj_set_style_arc_color(s_seconds_arc, themed(0x1A1A1C, SYNTH_TRACK, FLOWER_INK, CHRISTMAS_TRACK),
-                              LV_PART_MAIN);
-    const lv_color_t seconds_color = lv_color_mix(lv_color_hex(CHRISTMAS_GOLD),
-                                                lv_color_hex(kTimerColors[0]), christmas_opa);
+    lv_obj_set_style_text_color(s_hint, hint_color, 0);
+    lv_obj_set_style_text_opa(s_gear_icon, hint_opa, 0);
+    lv_obj_set_style_text_color(s_gear_icon, hint_color, 0);
+    lv_obj_set_style_arc_color(s_seconds_arc, themed(&FacePalette::track), LV_PART_MAIN);
     lv_obj_set_style_arc_color(s_seconds_arc,
-        lv_color_mix(seconds_color, accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)),
+        lv_color_mix(themed(&FacePalette::ring), accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)),
         LV_PART_INDICATOR);
     lv_obj_set_style_arc_opa(s_seconds_arc, ring_alpha, LV_PART_MAIN);
     lv_obj_set_style_arc_opa(s_seconds_arc, ring_alpha, LV_PART_INDICATOR);
     const bool visible = opa > LV_OPA_MIN;
     set_visible(s_date, visible);
     set_visible(s_hint, visible && hint_opa > LV_OPA_MIN);
+    set_visible(s_gear, visible && hint_opa > LV_OPA_MIN);
+    if (hint_opa > LV_OPA_70 && s_core->count == 0) {
+        lv_obj_add_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
+    } else {
+        lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
+    }
     set_visible(s_seconds_arc, !flower && visible && ring_alpha > LV_OPA_MIN);
 }
 
 // ---- Timer rings ---------------------------------------------------------------------------
+
+float clamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
+float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+float phase_of(uint32_t t, uint32_t start, uint32_t dur)
+{
+    return t <= start ? 0.0f : clamp01((float)(t - start) / dur);
+}
+
+// 0 -> 1 -> 0 every SMILEY_LOOP_MS from `start`.
+float loop_wave(uint32_t t, uint32_t start)
+{
+    if (t < start) {
+        return 0.0f;
+    }
+    const float p = (float)((t - start) % SMILEY_LOOP_MS) / SMILEY_LOOP_MS;
+    return 0.5f - 0.5f * cosf(6.28318530718f * p);
+}
+
+// Draws in the preview's face units (ring outer radius SMILEY_UNIT) around the card center.
+struct SmileyPen {
+    lv_draw_ctx_t *ctx;
+    lv_point_t center;
+    float k; // pixels per unit
+
+    lv_point_t at(float x, float y) const
+    {
+        return {(lv_coord_t)(center.x + lroundf(x * k)), (lv_coord_t)(center.y + lroundf(y * k))};
+    }
+    void polygon(const lv_point_t *points, uint16_t count, lv_color_t color, lv_opa_t opa) const
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = color;
+        dsc.bg_opa = opa;
+        lv_draw_polygon(ctx, &dsc, points, count);
+    }
+    void dot(float x, float y, float r, lv_color_t color, lv_opa_t opa) const
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = color;
+        dsc.bg_opa = opa;
+        dsc.radius = LV_RADIUS_CIRCLE;
+        const lv_point_t p = at(x, y);
+        const lv_coord_t pr = (lv_coord_t)LV_MAX(1, lroundf(r * k));
+        const lv_area_t area = {(lv_coord_t)(p.x - pr), (lv_coord_t)(p.y - pr),
+                                (lv_coord_t)(p.x + pr), (lv_coord_t)(p.y + pr)};
+        lv_draw_rect(ctx, &dsc, &area);
+    }
+    void line(float x1, float y1, float x2, float y2, float width, lv_color_t color, lv_opa_t opa) const
+    {
+        lv_draw_line_dsc_t dsc;
+        lv_draw_line_dsc_init(&dsc);
+        dsc.color = color;
+        dsc.opa = opa;
+        dsc.width = (lv_coord_t)LV_MAX(1, lroundf(width * k));
+        dsc.round_start = 1;
+        dsc.round_end = 1;
+        const lv_point_t a = at(x1, y1), b = at(x2, y2);
+        lv_draw_line(ctx, &dsc, &a, &b);
+    }
+    // `r` is the radius of the stroke's center line; angles in degrees, clockwise from 3 o'clock.
+    void arc(float x, float y, float r, float width, float start, float end, lv_color_t color,
+             lv_opa_t opa) const
+    {
+        if (end - start < 1.0f) {
+            return;
+        }
+        lv_draw_arc_dsc_t dsc;
+        lv_draw_arc_dsc_init(&dsc);
+        dsc.color = color;
+        dsc.opa = opa;
+        dsc.width = (lv_coord_t)LV_MAX(1, lroundf(width * k));
+        dsc.rounded = 1;
+        const lv_point_t c = at(x, y);
+        lv_draw_arc(ctx, &dsc, &c, (uint16_t)lroundf(r * k + dsc.width / 2.0f), (uint16_t)lroundf(start),
+                    (uint16_t)lroundf(end));
+    }
+};
+
+// Five-pointed star from convex pieces (LVGL polygons must be convex).
+void draw_star(const SmileyPen &pen, float x, float y, float outer, float inner, float rot_deg,
+               lv_color_t color, lv_opa_t opa)
+{
+    lv_point_t tips[5], notches[5], core[5];
+    for (int i = 0; i < 5; i++) {
+        const float a = (-90.0f + rot_deg + i * 72.0f) * 0.01745329252f;
+        const float b = a + 36.0f * 0.01745329252f;
+        // The core is 1 px larger than the notches so anti-aliased seams don't show.
+        const float core_r = inner + 1.0f / pen.k;
+        tips[i] = pen.at(x + outer * cosf(a), y + outer * sinf(a));
+        notches[i] = pen.at(x + inner * cosf(b), y + inner * sinf(b));
+        core[i] = pen.at(x + core_r * cosf(b), y + core_r * sinf(b));
+    }
+    pen.polygon(core, 5, color, opa);
+    for (int i = 0; i < 5; i++) {
+        const lv_point_t spike[3] = {notches[(i + 4) % 5], tips[i], notches[i]};
+        pen.polygon(spike, 3, color, opa);
+    }
+}
+
+void draw_sparkle(const SmileyPen &pen, float x, float y, float scale, lv_color_t color, lv_opa_t opa)
+{
+    const float l = 9.0f * scale, w = LV_MAX(2.0f * scale, 1.5f / pen.k);
+    const lv_point_t vertical[4] = {pen.at(x, y - l), pen.at(x + w, y), pen.at(x, y + l), pen.at(x - w, y)};
+    const lv_point_t horizontal[4] = {pen.at(x - l, y), pen.at(x, y - w), pen.at(x + l, y), pen.at(x, y + w)};
+    pen.polygon(vertical, 4, color, opa);
+    pen.polygon(horizontal, 4, color, opa);
+}
+
+constexpr float SMILEY_EYES[2][2] = {{-37.0f, -25.0f}, {37.0f, -25.0f}};
+constexpr float SMILEY_SPARKLES[4][3] = {{-110.0f, -100.0f, 2000.0f}, {112.0f, -90.0f, 2500.0f},
+                                         {105.0f, 100.0f, 3000.0f}, {-112.0f, 90.0f, 2300.0f}};
+
+void draw_smiley(lv_event_t *e)
+{
+    const Card &c = *static_cast<const Card *>(lv_event_get_user_data(e));
+    if (!c.smiley || c.opa <= LV_OPA_MIN) {
+        return;
+    }
+    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    const lv_area_t &box = c.face->coords;
+    const uint32_t t = c.smiley_now - c.smiley_ms;
+    const float bounce = t >= SMILEY_BOUNCE_MS && t < SMILEY_INTRO_MS
+        ? 1.0f + 0.06f * sinf(3.14159265f * (t - SMILEY_BOUNCE_MS) / SMILEY_BOUNCE_DUR_MS)
+        : 1.0f;
+    const SmileyPen pen = {ctx, {(lv_coord_t)((box.x1 + box.x2 + 1) / 2), (lv_coord_t)((box.y1 + box.y2 + 1) / 2)},
+                           c.r / SMILEY_UNIT * bounce};
+    const lv_color_t color = lv_color_hex(c.color), gold = lv_color_hex(SMILEY_GOLD);
+
+    // The four quadrant arcs close their gaps, fill up and contract into the head.
+    const float m = brush_ease(EASE_IN_OUT_CUBIC, phase_of(t, SMILEY_MORPH_DELAY_MS, SMILEY_MORPH_MS));
+    const float head_w = c.arc_w * 10.0f / 16.0f;
+    lv_draw_arc_dsc_t ring;
+    lv_draw_arc_dsc_init(&ring);
+    ring.color = color;
+    ring.rounded = 1;
+    ring.width = (lv_coord_t)LV_MAX(1, lroundf(lerpf(c.arc_w, head_w, m) * bounce));
+    const uint16_t outer = (uint16_t)lroundf(lerpf(c.r, 125.0f * c.r / SMILEY_UNIT + head_w / 2.0f, m) * bounce);
+    if (m >= 1.0f) {
+        ring.opa = c.opa;
+        lv_draw_arc(ctx, &ring, &pen.center, outer, 0, 360);
+    } else {
+        const float gap = c.half_gap * (1.0f - m);
+        const lv_opa_t track = scale_opa(to_opa(TRACK_OPA / 255.0f * (1.0f - m)), c.opa);
+        for (int q = 0; q < BRUSH_QUADRANTS; q++) {
+            const float start = 270.0f + q * 90.0f + gap, span = 90.0f - 2.0f * gap;
+            if (track > LV_OPA_MIN) {
+                ring.opa = track;
+                lv_draw_arc(ctx, &ring, &pen.center, outer, (uint16_t)lroundf(start),
+                            (uint16_t)lroundf(start + span));
+            }
+            const float fill = span * lerpf(c.quad_fill[q] / 1000.0f, 1.0f, m);
+            if (fill >= 1.0f) {
+                ring.opa = c.opa;
+                lv_draw_arc(ctx, &ring, &pen.center, outer, (uint16_t)lroundf(start),
+                            (uint16_t)lroundf(start + fill));
+            }
+        }
+    }
+
+    for (int i = 0; i < 2; i++) {
+        const float pop = brush_ease(EASE_OUT_BACK, phase_of(t, SMILEY_EYE_MS[i], SMILEY_EYE_POP_MS));
+        if (pop <= 0.01f) {
+            continue;
+        }
+        const float x = SMILEY_EYES[i][0], y = SMILEY_EYES[i][1];
+        if (c.rating >= 3) {
+            const float twinkle = loop_wave(t, SMILEY_EYE_MS[i] + 600);
+            const float s = pop * (1.0f + 0.18f * twinkle);
+            draw_star(pen, x, y, 19.5f * s, 8.0f * s, 18.0f * twinkle, gold, c.opa);
+        } else {
+            pen.dot(x, y, 11.0f * pop, color, c.opa);
+        }
+    }
+
+    const float draw = brush_ease(EASE_OUT_CUBIC, phase_of(t, SMILEY_MOUTH_MS, SMILEY_MOUTH_DRAW_MS));
+    constexpr float mouth_w = 10.0f;
+    if (draw > 0.0f) {
+        if (c.rating == 0) {
+            pen.line(-45.0f, 52.0f, -45.0f + 90.0f * draw, 52.0f, mouth_w, color, c.opa);
+        } else if (c.rating == 1) {
+            // Flat, then curling up on the right.
+            constexpr float straight = 53.0f, curve = 36.0f * 1.5707963f;
+            const float len = draw * (straight + curve);
+            pen.line(-45.0f, 52.0f, -45.0f + LV_MIN(len, straight), 52.0f, mouth_w, color, c.opa);
+            if (len > straight) {
+                pen.arc(8.0f, 16.0f, 36.0f, mouth_w, 90.0f - 90.0f * (len - straight) / curve, 90.0f, color, c.opa);
+            }
+        } else {
+            pen.arc(0.0f, -4.6f, 62.0f, mouth_w, 155.0f - 130.0f * draw, 155.0f, color, c.opa);
+        }
+    }
+
+    if (c.rating >= 3) {
+        for (const auto &s : SMILEY_SPARKLES) {
+            const float wave = loop_wave(t, (uint32_t)s[2]);
+            if (wave > 0.02f) {
+                draw_sparkle(pen, s[0], s[1], 0.3f + 0.7f * wave, gold, scale_opa(to_opa(wave), c.opa));
+            }
+        }
+    }
+}
+
+// After the intro only the twinkling stars and sparkles change; redraw just those.
+void invalidate_smiley_loops(const Card &c)
+{
+    const lv_area_t &box = c.face->coords;
+    const float k = c.r / SMILEY_UNIT;
+    const lv_coord_t cx = (lv_coord_t)((box.x1 + box.x2 + 1) / 2), cy = (lv_coord_t)((box.y1 + box.y2 + 1) / 2);
+    const auto invalidate = [&](float x, float y, float half) {
+        const lv_coord_t h = (lv_coord_t)lroundf(half * k) + 2;
+        const lv_coord_t px = (lv_coord_t)(cx + lroundf(x * k)), py = (lv_coord_t)(cy + lroundf(y * k));
+        const lv_area_t area = {(lv_coord_t)(px - h), (lv_coord_t)(py - h), (lv_coord_t)(px + h), (lv_coord_t)(py + h)};
+        lv_obj_invalidate_area(c.face, &area);
+    };
+    for (const auto &eye : SMILEY_EYES) {
+        invalidate(eye[0], eye[1], 26.0f);
+    }
+    for (const auto &s : SMILEY_SPARKLES) {
+        invalidate(s[0], s[1], 11.0f);
+    }
+}
 
 void create_card(int color)
 {
@@ -834,28 +1400,40 @@ void create_card(int color)
     lv_obj_add_flag(c.pressure, LV_OBJ_FLAG_HIDDEN);
     c.icon = brush_icon_create(c.obj);
     lv_obj_add_flag(c.icon, LV_OBJ_FLAG_HIDDEN);
+    c.face = lv_obj_create(c.obj);
+    lv_obj_remove_style_all(c.face);
+    lv_obj_clear_flag(c.face, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(c.face, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(c.face, draw_smiley, LV_EVENT_DRAW_MAIN, &c);
     c.cx = c.cy = c.r = -1;
+    c.arc_w = 6;
+    c.half_gap = 0;
     c.opa = 0;
+    c.content_opa = LV_OPA_COVER;
     c.state = BT_RUNNING;
     c.color = kTimerColors[color];
     c.oralb = false;
     c.pressure_high = false;
+    c.smiley = false;
 }
 
 void style_card(Card &c)
 {
-    const bool paused = c.state == BT_PAUSED;
+    const bool paused = c.state == BT_PAUSED && !c.smiley;
     const lv_color_t color = lv_color_hex(c.color);
     const lv_color_t dimmed = paused ? lv_color_mix(color, lv_color_black(), LV_OPA_50) : color;
     const lv_opa_t indicator = scale_opa(paused ? LV_OPA_50 : LV_OPA_COVER, c.opa);
+    const lv_opa_t content = scale_opa(c.content_opa, c.opa);
     for (lv_obj_t *arc : c.arcs) {
+        set_visible(arc, !c.smiley);
         lv_obj_set_style_arc_color(arc, color, LV_PART_MAIN);
         lv_obj_set_style_arc_opa(arc, scale_opa(TRACK_OPA, c.opa), LV_PART_MAIN);
         lv_obj_set_style_arc_color(arc, color, LV_PART_INDICATOR);
         lv_obj_set_style_arc_opa(arc, indicator, LV_PART_INDICATOR);
     }
     seg_set_color(c.digits, dimmed);
-    seg_set_opa(c.digits, c.opa);
+    seg_set_opa(c.digits, content);
+    set_visible(c.digits, content > LV_OPA_MIN);
 
     // Pressure is only meaningful while the brush is actually running.
     const bool too_hard = c.oralb && c.pressure_high && c.state == BT_RUNNING;
@@ -864,17 +1442,21 @@ void style_card(Card &c)
         status_color = lv_color_hex(COLOR_PRESSURE_HIGH);
     }
     lv_obj_set_style_text_color(c.status, status_color, 0);
-    lv_obj_set_style_text_opa(c.status, c.opa, 0);
+    lv_obj_set_style_text_opa(c.status, content, 0);
 
-    set_visible(c.icon, c.oralb);
-    set_visible(c.pressure, c.oralb && c.state != BT_DONE);
+    set_visible(c.icon, c.oralb && content > LV_OPA_MIN);
+    set_visible(c.pressure, c.oralb && c.state != BT_DONE && !c.smiley);
     if (c.oralb) {
         const lv_color_t bristles = too_hard ? lv_color_hex(COLOR_PRESSURE_HIGH) : lv_color_white();
-        brush_icon_set_colors(c.icon, dimmed, bristles, c.opa);
+        brush_icon_set_colors(c.icon, dimmed, bristles, content);
         lv_obj_set_style_arc_color(c.pressure, lv_color_hex(too_hard ? COLOR_PRESSURE_HIGH : COLOR_PRESSURE_OK),
                                    LV_PART_MAIN);
         lv_obj_set_style_arc_opa(c.pressure, scale_opa(too_hard ? LV_OPA_COVER : PRESSURE_OK_OPA, c.opa),
                                  LV_PART_MAIN);
+    }
+    set_visible(c.face, c.smiley);
+    if (c.smiley) {
+        lv_obj_invalidate(c.face);
     }
 }
 
@@ -896,6 +1478,9 @@ void apply_card_geometry(Card &c, const brush_geom_t &g)
         // Four quadrant arcs starting at 12 o'clock; the rounded caps need a bit of extra gap.
         const int half_gap = 2 + (arc_w * 2865 / 100 + r / 2) / r;
         lv_obj_set_size(c.obj, size, size);
+        lv_obj_set_size(c.face, size, size);
+        c.arc_w = arc_w;
+        c.half_gap = half_gap;
         for (int q = 0; q < BRUSH_QUADRANTS; q++) {
             lv_obj_set_size(c.arcs[q], size, size);
             lv_obj_set_style_arc_width(c.arcs[q], arc_w, LV_PART_MAIN);
@@ -930,14 +1515,43 @@ void apply_card_geometry(Card &c, const brush_geom_t &g)
     }
 }
 
+void update_smiley(Card &c, uint32_t now_ms)
+{
+    c.smiley_now = now_ms;
+    const uint32_t t = now_ms - c.smiley_ms;
+    const lv_opa_t content = t >= SMILEY_CONTENT_OUT_MS
+        ? LV_OPA_TRANSP : to_opa(1.0f - (float)t / SMILEY_CONTENT_OUT_MS);
+    if (content != c.content_opa) {
+        c.content_opa = content;
+        style_card(c); // also redraws the face
+    } else if (t < SMILEY_INTRO_MS + 100) {
+        lv_obj_invalidate(c.face);
+    } else if (c.rating >= 3) {
+        invalidate_smiley_loops(c);
+    }
+}
+
 void update_card_content(Card &c, int index, uint32_t now_ms, bool count_up)
 {
     const brush_timer_t &t = s_core->timers[index];
-    const uint32_t color = t.state == BT_DONE ? COLOR_DONE : kTimerColors[t.color % BRUSH_MAX_TIMERS];
+    const uint32_t color = kTimerColors[t.color % BRUSH_MAX_TIMERS];
     const bool oralb = t.source == BRUSH_SRC_ORALB;
     const bool pressure_high = oralb && t.pressure_high;
+    const bool smiley = t.state == BT_DONE || t.finishing;
     if (pressure_high && !c.pressure_high && t.state == BT_RUNNING) {
         brush_scene_pulse(&s_scene, t.color, PULSE_PRESSURE_AMP, PULSE_PRESSURE_MS, now_ms);
+    }
+    if (smiley != c.smiley) {
+        c.smiley = smiley;
+        c.content_opa = LV_OPA_COVER;
+        if (smiley) {
+            c.smiley_ms = c.smiley_now = now_ms;
+            c.rating = brush_rating(s_core, index, now_ms);
+            for (int q = 0; q < BRUSH_QUADRANTS; q++) {
+                c.quad_fill[q] = brush_quadrant_permille(s_core, index, q, now_ms);
+            }
+        }
+        style_card(c);
     }
     if (c.state != t.state || c.color != color || c.oralb != oralb || c.pressure_high != pressure_high) {
         c.state = (int8_t)t.state;
@@ -945,6 +1559,10 @@ void update_card_content(Card &c, int index, uint32_t now_ms, bool count_up)
         c.oralb = oralb;
         c.pressure_high = pressure_high;
         style_card(c);
+    }
+    if (c.smiley) {
+        update_smiley(c, now_ms);
+        return;
     }
 
     for (int q = 0; q < BRUSH_QUADRANTS; q++) {
@@ -1065,7 +1683,11 @@ void refresh_settings()
     lv_label_set_text_fmt(s_sound_label, "%s  %s", s_set_values.sound ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE,
                           s_set_values.sound ? t->sound : t->muted);
     lv_label_set_text(s_lang_label, t->language);
-    const char *face = s_set_values.clock_face == CLOCK_FACE_CHRISTMAS ? t->christmas
+    const char *face = s_set_values.clock_face == CLOCK_FACE_CANDY ? t->candy
+                     : s_set_values.clock_face == CLOCK_FACE_HEART ? t->heart
+                     : s_set_values.clock_face == CLOCK_FACE_REINDEER ? t->reindeer
+                     : s_set_values.clock_face == CLOCK_FACE_NINETIES ? "90s"
+                     : s_set_values.clock_face == CLOCK_FACE_CHRISTMAS ? t->christmas
                      : s_set_values.clock_face == CLOCK_FACE_FLOWER_POWER ? "Flower Power"
                      : s_set_values.clock_face == CLOCK_FACE_SYNTHWAVE ? "Synthwave" : t->classic;
     lv_label_set_text_fmt(s_face_label, "%s: %s", t->clock_face, face);
@@ -1191,10 +1813,11 @@ void ui_init(brush_core_t *core, uint32_t now_ms)
 
     s_view = lv_obj_create(s_main_scr);
     lv_obj_remove_style_all(s_view);
-    lv_obj_clear_flag(s_view, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(s_view, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_size(s_view, LCD_WIDTH, LCD_HEIGHT);
     lv_obj_add_event_cb(s_view, idle_event_cb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(s_view, idle_event_cb, LV_EVENT_LONG_PRESSED, nullptr);
+    lv_obj_add_event_cb(s_view, idle_event_cb, LV_EVENT_GESTURE, nullptr);
 
     build_idle();
     for (int c = 0; c < BRUSH_MAX_TIMERS; c++) {
@@ -1245,7 +1868,12 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
 
     if (s_idle_opa > LV_OPA_MIN) {
         if (settings.clock_face != CLOCK_FACE_FLOWER_POWER) {
-            lv_arc_set_value(s_seconds_arc, (int16_t)(local_time->tm_sec * 10 + millis_in_second / 100));
+            // Clearing a full ring in one step redraws the whole screen, which the panel shows as a
+            // partial wipe; erase the previous minute clockwise during second 0 instead.
+            const int sec = local_time->tm_sec;
+            const uint16_t start = sec == 0 ? (uint16_t)(millis_in_second * 360 / 1000) : 0;
+            const uint16_t end = sec == 0 ? 360 : (uint16_t)((sec * 10 + millis_in_second / 100) * 360 / 600);
+            lv_arc_set_angles(s_seconds_arc, start, end);
         }
         char date[40];
         brush_format_date(settings.lang, local_time->tm_wday, local_time->tm_mday, local_time->tm_mon, date,
@@ -1259,6 +1887,13 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
 
 bool ui_animating(uint32_t now_ms)
 {
+    if (lv_scr_act() == s_main_scr) {
+        for (const Card &c : s_cards) {
+            if (c.smiley && c.opa > LV_OPA_MIN && now_ms - c.smiley_ms < SMILEY_INTRO_MS) {
+                return true;
+            }
+        }
+    }
     return brush_scene_animating(&s_scene, now_ms) ||
            (lv_scr_act() == s_main_scr && s_saver_transitioning);
 }

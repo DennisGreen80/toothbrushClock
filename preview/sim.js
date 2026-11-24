@@ -12,7 +12,6 @@
   const MAX_TIMERS = 4;
   const QUADRANTS = 4;
   const TIMER_COLORS = ['#3DD6F5', '#FF7AB6', '#FFC24B', '#9B8CFF'];
-  const COLOR_DONE = '#4ADE80';
   const COLOR_TEXT = '#ECECEC';
   const COLOR_MUTED = '#8E8E93';
   const COLOR_FAINT = '#5A5A5E';
@@ -24,12 +23,26 @@
   const TRACK_OPA = 40 / 255;
   const OFF_SEGMENT_OPA = 18 / 255;
   const SCREENSAVER_DRIFT_DELAY_MS = 5 * 60 * 1000;
-  const CLOCK_FACES = ['classic', 'synthwave', 'flower-power', 'christmas'];
+  const CLOCK_FACES = ['classic', 'synthwave', 'flower-power', 'christmas', 'nineties', 'reindeer', 'heart', 'candy'];
+  const EXTRA_FACES = ['nineties', 'reindeer', 'heart', 'candy'];
+  // Mirrors kFacePalettes in src/ui/ui.cpp.
+  const FACE_PALETTE = {
+    classic: { clock: '#ECECEC', date: '#8E8E93', hint: '#5A5A5E', track: '#1A1A1C', ring: '#3DD6F5', hintTop: 372 },
+    synthwave: { clock: '#FFD4F7', date: '#A4F5FF', hint: '#D6B2F2', track: '#321841', ring: '#3DD6F5', hintTop: 342 },
+    'flower-power': { clock: '#43223B', date: '#6C304A', hint: '#3D5C4E', track: '#43223B', ring: '#3DD6F5', hintTop: 348 },
+    christmas: { clock: '#FFF9E8', date: '#FFD58D', hint: '#A6C3B4', track: '#29443A', ring: '#FFD58D', hintTop: 344 },
+    nineties: { clock: '#FFF2B0', date: '#63EBD0', hint: '#EFA7DB', track: '#473466', ring: '#FF69B4', hintTop: 344 },
+    reindeer: { clock: '#F1FAFF', date: '#A9D9F0', hint: '#A9C6D9', track: '#36536A', ring: '#D9F4FF', hintTop: 344 },
+    heart: { clock: '#F4EBD7', date: '#E9C99A', hint: '#9DBFA6', track: '#2E5E43', ring: '#D93A3A', hintTop: 344 },
+    candy: { clock: '#B3122E', date: '#2E8B57', hint: '#C46B7D', track: '#F7C5CF', ring: '#D7263D', hintTop: 344 },
+  };
   const SYNTH_GRID_COLORS = ['#A43983', '#7051B1', '#368DA2', '#6357AD'];
   const SYNTH_RING_COLORS = ['#FF53BB', '#A685FF', '#54E8F7', '#FFAB6B'];
   const FLOWER = { ink: '#43223B', paper: '#FFE9BA', coral: '#E66A4E', pink: '#BA435F',
     gold: '#F5B640', green: '#527763', ring: ['#FFC557', '#F78E60', '#F48CA5', '#9CC18E'] };
   const CHRISTMAS = { gold: '#FFD58D', snow: '#FFF9E8', track: '#29443A' };
+  const CANDY = { red: '#D7263D', white: '#FFFFFF' };
+  const SETTINGS_GEAR = { cx: 432, cy: 240, r: 22 };
   const FLOWER_MARKS = Array.from({ length: 60 }, (_, i) => {
     const angle = 2 * Math.PI * i / 60;
     return [240 + Math.round(224 * Math.sin(angle)), 240 - Math.round(224 * Math.cos(angle))];
@@ -38,7 +51,7 @@
   const STRINGS = {
     en: {
       language: 'English', hint: 'Tap to start brushing', paused: 'Paused', done: 'Done!', tooHard: 'Too hard', settings: 'Settings',
-      countdown: 'Countdown', countUp: 'Count up', sound: 'Sound', muted: 'Muted', face: 'Face', classic: 'Classic', christmas: 'Christmas', ok: 'Done',
+      countdown: 'Countdown', countUp: 'Count up', sound: 'Sound', muted: 'Muted', face: 'Face', classic: 'Classic', christmas: 'Christmas', reindeer: 'Reindeer', heart: 'Woven Heart', candy: 'Candy Cane', ok: 'Done',
       quadrants: ['Upper right', 'Lower right', 'Lower left', 'Upper left'],
       weekdays: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
       months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
@@ -46,7 +59,7 @@
     },
     da: {
       language: 'Dansk', hint: 'Tryk for at børste', paused: 'Pause', done: 'Færdig!', tooHard: 'For hårdt', settings: 'Indstillinger',
-      countdown: 'Nedtælling', countUp: 'Tæl op', sound: 'Lyd', muted: 'Lydløs', face: 'Urskive', classic: 'Klassisk', christmas: 'Jul', ok: 'Færdig',
+      countdown: 'Nedtælling', countUp: 'Tæl op', sound: 'Lyd', muted: 'Lydløs', face: 'Urskive', classic: 'Klassisk', christmas: 'Jul', reindeer: 'Rensdyr', heart: 'Julehjerte', candy: 'Slikstok', ok: 'Færdig',
       quadrants: ['Øverst højre', 'Nederst højre', 'Nederst venstre', 'Øverst venstre'],
       weekdays: ['Søndag', 'Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag'],
       months: ['jan.', 'feb.', 'mar.', 'apr.', 'maj', 'jun.', 'jul.', 'aug.', 'sep.', 'okt.', 'nov.', 'dec.'],
@@ -55,7 +68,9 @@
   };
   const LANGS = Object.keys(STRINGS);
   const strings = lang => STRINGS[lang] || STRINGS.en;
-  const faceName = (face, txt) => face === 'christmas' ? txt.christmas : face === 'flower-power' ? 'Flower Power' :
+  const faceName = (face, txt) => face === 'candy' ? txt.candy : face === 'heart' ? txt.heart :
+    face === 'reindeer' ? txt.reindeer : face === 'nineties' ? '90s' :
+    face === 'christmas' ? txt.christmas : face === 'flower-power' ? 'Flower Power' :
     face === 'synthwave' ? 'Synthwave' : txt.classic;
   const FONT = "Montserrat, 'Segoe UI', Helvetica, Arial, sans-serif";
   const LINE_H = { 14: 16, 20: 22, 28: 30 };
@@ -65,7 +80,7 @@
   // ---- Core logic (port of lib/brush_core/src/brush_core.c) --------------------------------
   class BrushCore {
     constructor(cfg) {
-      this.cfg = Object.assign({ durationMs: 120000, markMs: 30000, autoClearMs: 60000 }, cfg || {});
+      this.cfg = Object.assign({ durationMs: 120000, markMs: 30000, autoClearMs: 60000, finishHoldMs: 6000 }, cfg || {});
       this.timers = [];
     }
     get count() { return this.timers.length; }
@@ -79,7 +94,7 @@
       this.timers.push({
         state: elapsedMs >= this.cfg.durationMs ? 'done' : 'running', start: now - elapsedMs, pausedTotal: 0,
         pauseStart: 0, marks: this.marksReached(elapsedMs), color, source: source || 'manual', held: false,
-        pressureHigh: false, id: this.nextId,
+        pressureHigh: false, id: this.nextId, finishing: false, finishMs: 0,
       });
       return this.timers.length - 1;
     }
@@ -114,8 +129,28 @@
     togglePause(i, now) {
       const t = this.timers[i];
       if (!t) return 'done';
-      if (t.state !== 'done') this.setPaused(i, t.state === 'running', now);
+      if (t.state !== 'done' && !t.finishing) this.setPaused(i, t.state === 'running', now);
       return t.state;
+    }
+    // Cancelled early: freeze and keep the timer for finishHoldMs so its smiley can show.
+    finish(i, now) {
+      const t = this.timers[i];
+      if (!t) return false;
+      if (t.state === 'done' || this.cfg.finishHoldMs === 0) { this.remove(i); return false; }
+      if (!t.finishing) {
+        this.setPaused(i, true, now);
+        t.pressureHigh = false;
+        t.finishing = true;
+        t.finishMs = now;
+      }
+      return true;
+    }
+    // 0: under 1/4 of the target, 1: under 1/2, 2: up to 3/4, 3: more.
+    rating(i, now) {
+      const seconds = idiv(this.elapsed(i, now), 1000), quarter = idiv(idiv(this.cfg.durationMs, 1000), QUADRANTS);
+      if (seconds < quarter) return 0;
+      if (seconds < 2 * quarter) return 1;
+      return seconds <= 3 * quarter ? 2 : 3;
     }
     elapsed(i, now) {
       const t = this.timers[i];
@@ -142,6 +177,13 @@
           events.push({ type: 'mark', index: i, mark: reached, color: t.color });
         }
       });
+      for (let i = this.timers.length - 1; i >= 0; i--) {
+        const t = this.timers[i];
+        if (t.finishing && now - t.finishMs >= this.cfg.finishHoldMs) {
+          this.remove(i);
+          events.push({ type: 'cleared', index: i, color: t.color });
+        }
+      }
       if (autoClearMs > 0) {
         for (let i = this.timers.length - 1; i >= 0; i--) {
           const t = this.timers[i];
@@ -209,7 +251,7 @@
       l.stopped = true;
       l.stoppedMs = now;
       const i = core.indexOfId(l.timerId);
-      if (i < 0) return 'none';
+      if (i < 0 || core.timers[i].finishing) return 'none';
       core.timers[i].pressureHigh = false;
       return core.setPaused(i, true, now) ? 'paused' : 'none';
     }
@@ -234,7 +276,7 @@
       l.stopped = false;
       if (l.dismissed) return 'none';
       const i = core.indexOfId(l.timerId);
-      if (i < 0) { l.dismissed = true; return 'none'; }
+      if (i < 0 || core.timers[i].finishing) { l.dismissed = true; return 'none'; }
       core.timers[i].pressureHigh = adv.pressureHigh;
       const action = core.setPaused(i, false, now) || wasStopped ? 'resumed' : 'none';
       const e = core.elapsed(i, now);
@@ -250,7 +292,7 @@
         }
         if (l.stopped && now - l.stoppedMs > ORALB.resumeWindowMs) {
           const i = core.indexOfId(l.timerId);
-          if (!l.dismissed && i >= 0) { core.remove(i); result = 'ended'; }
+          if (!l.dismissed && i >= 0 && !core.timers[i].finishing) { core.remove(i); result = 'ended'; }
           this.links.splice(this.links.indexOf(l), 1);
         }
       }
@@ -484,8 +526,105 @@
     const tooHard = oralb && t.pressureHigh && t.state === 'running';
     const status = t.state === 'paused' ? txt.paused : t.state === 'done' ? txt.done
       : tooHard ? txt.tooHard : txt.quadrants[core.currentQuadrant(i, now)];
-    const color = t.state === 'done' ? COLOR_DONE : TIMER_COLORS[t.color % MAX_TIMERS];
-    return { state: t.state, color, quads, text: formatMMSS(secs), status, oralb, tooHard };
+    const smiley = t.state === 'done' || t.finishing;
+    const color = TIMER_COLORS[t.color % MAX_TIMERS];
+    return { id: t.id, state: t.state, color, quads, text: formatMMSS(secs), status, oralb, tooHard, smiley };
+  }
+
+  // ---- Finish smiley (mirrors draw_smiley() in src/ui/ui.cpp and preview/smileys.html) --------
+  const SMILEY = { gold: '#FFD58D', contentOutMs: 350, morphDelayMs: 200, morphMs: 700, eyeMs: [1000, 1100],
+    eyePopMs: 400, mouthMs: 1300, mouthDrawMs: 450, bounceMs: 1800, bounceDurMs: 500, loopMs: 1600, unit: 213,
+    eyes: [[-37, -25], [37, -25]], sparkles: [[-110, -100, 2000], [112, -90, 2500], [105, 100, 3000], [-112, 90, 2300]] };
+
+  function smileyCard(content, g, now) {
+    const r = Math.round(g.r), cx = Math.round(g.cx), cy = Math.round(g.cy);
+    const opa = clamp01(g.opa);
+    const { color, oralb } = content;
+    const t = Math.max(0, now - content.smileyStart);
+    const phase = (start, dur) => clamp01((t - start) / dur);
+    const wave = start => t < start ? 0 : 0.5 - 0.5 * Math.cos(2 * Math.PI * ((t - start) % SMILEY.loopMs) / SMILEY.loopMs);
+    const arcW = Math.max(6, idiv(r * 85, 1000));
+    const halfGap = 2 + idiv(idiv(arcW * 2865, 100) + idiv(r, 2), r);
+    let s = '';
+
+    // Digits, status and toothbrush icon fade out.
+    const contentOpa = clamp01(1 - t / SMILEY.contentOutMs) * opa;
+    if (contentOpa > 0.01) {
+      if (oralb) s += brushIcon(cx, cy - idiv(r * 48, 100), idiv(r * 46, 100), color, '#FFFFFF', contentOpa);
+      const digitH = idiv(r * 46, 100), digitsCy = cy - idiv(r * 6, 100);
+      s += segCentered(cx, digitsCy - idiv(digitH, 2), digitH, content.frozenText, color, contentOpa);
+      s += text(cx, digitsCy + idiv(digitH, 2) + idiv(r * 18, 100), r >= 120 ? 20 : 14, color, content.frozenStatus, 500, contentOpa);
+    }
+
+    // The quadrant arcs close their gaps, fill up and contract into the head.
+    const bounce = t >= SMILEY.bounceMs && t < SMILEY.bounceMs + SMILEY.bounceDurMs
+      ? 1 + 0.06 * Math.sin(Math.PI * (t - SMILEY.bounceMs) / SMILEY.bounceDurMs) : 1;
+    const k = r / SMILEY.unit * bounce;
+    const m = EASE.inOutCubic(phase(SMILEY.morphDelayMs, SMILEY.morphMs));
+    const headW = arcW * 10 / 16;
+    const width = (arcW + (headW - arcW) * m) * bounce;
+    const outer = (r + (125 * r / SMILEY.unit + headW / 2 - r) * m) * bounce;
+    if (m >= 1) {
+      s += arcPath(cx, cy, outer, width, 0, 360, color, opa);
+    } else {
+      const gap = halfGap * (1 - m);
+      for (let q = 0; q < QUADRANTS; q++) {
+        const a0 = 270 + q * 90 + gap, span = 90 - 2 * gap;
+        s += arcPath(cx, cy, outer, width, a0, a0 + span, color, TRACK_OPA * (1 - m) * opa);
+        const fill = span * (content.quadFill[q] / 1000 + (1 - content.quadFill[q] / 1000) * m);
+        if (fill >= 1) s += arcPath(cx, cy, outer, width, a0, a0 + fill, color, opa);
+      }
+    }
+
+    const px = (x, y) => [cx + x * k, cy + y * k];
+    const fmt = ([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`;
+    SMILEY.eyes.forEach(([x, y], i) => {
+      const p = phase(SMILEY.eyeMs[i], SMILEY.eyePopMs);
+      const pop = p <= 0 ? 0 : EASE.outBack(p);
+      if (pop <= 0.01) return;
+      if (content.rating >= 3) {
+        const tw = wave(SMILEY.eyeMs[i] + 600), sc = pop * (1 + 0.18 * tw);
+        let d = '';
+        for (let j = 0; j < 10; j++) {
+          const rr = (j % 2 ? 8 : 19.5) * sc, a = (j * 36 - 90 + 18 * tw) * Math.PI / 180;
+          d += (j ? 'L' : 'M') + fmt(px(x + rr * Math.cos(a), y + rr * Math.sin(a)));
+        }
+        s += `<path d="${d}Z" fill="${SMILEY.gold}" fill-opacity="${opa.toFixed(3)}"/>`;
+      } else {
+        const [ex, ey] = px(x, y);
+        s += `<circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="${(11 * pop * k).toFixed(2)}" fill="${color}" fill-opacity="${opa.toFixed(3)}"/>`;
+      }
+    });
+
+    const draw = EASE.outCubic(phase(SMILEY.mouthMs, SMILEY.mouthDrawMs));
+    const mouthW = 10 * k;
+    const line = (x1, x2, y) => `<path d="M${fmt(px(x1, y))} L${fmt(px(x2, y))}" stroke="${color}" stroke-opacity="${opa.toFixed(3)}" stroke-width="${mouthW.toFixed(2)}" stroke-linecap="round"/>`;
+    const arc = (x, y, rc, a0, a1) => {
+      const [ax, ay] = px(x, y);
+      return a1 - a0 >= 1 ? arcPath(ax, ay, rc * k + mouthW / 2, mouthW, a0, a1, color, opa) : '';
+    };
+    if (draw > 0) {
+      if (content.rating === 0) {
+        s += line(-45, -45 + 90 * draw, 52);
+      } else if (content.rating === 1) {
+        const straight = 53, curve = 36 * Math.PI / 2, len = draw * (straight + curve);
+        s += line(-45, -45 + Math.min(len, straight), 52);
+        if (len > straight) s += arc(8, 16, 36, 90 - 90 * (len - straight) / curve, 90);
+      } else {
+        s += arc(0, -4.6, 62, 155 - 130 * draw, 155);
+      }
+    }
+
+    if (content.rating >= 3) {
+      for (const [x, y, delay] of SMILEY.sparkles) {
+        const w = wave(delay);
+        if (w <= 0.02) continue;
+        const l = 9 * (0.3 + 0.7 * w), n = 2 * (0.3 + 0.7 * w);
+        const pts = [[0, -l], [n, -n], [l, 0], [n, n], [0, l], [-n, n], [-l, 0], [-n, -n]];
+        s += `<path d="M${pts.map(([dx, dy]) => fmt(px(x + dx, y + dy))).join(' L')}Z" fill="${SMILEY.gold}" fill-opacity="${(w * opa).toFixed(3)}"/>`;
+      }
+    }
+    return s;
   }
 
   // Toothbrush icon (src/ui/brush_icon.cpp): shapes in a 100 x 40 box.
@@ -499,7 +638,8 @@
     return ICON_BODY.map(s => shape(s, body)).join('') + ICON_BRISTLES.map(s => shape(s, bristles)).join('');
   }
 
-  function renderCard(content, g) {
+  function renderCard(content, g, now) {
+    if (content.smiley) return smileyCard(content, g, now);
     const r = Math.round(g.r), cx = Math.round(g.cx), cy = Math.round(g.cy);
     const opa = clamp01(g.opa);
     const { color, state, oralb, tooHard } = content;
@@ -570,15 +710,25 @@
     return mix(colors[(i + 1) % colors.length], colors[i], phase - i);
   }
 
-  function synthRing(secFrac, opa) {
+  function synthRing(startFrac, secFrac, opa) {
     let s = '<g class="synth-ring">';
-    const sweep = Math.floor(secFrac * 360), step = 5;
-    for (let start = 0; start < sweep; start += step) {
+    const first = Math.floor(startFrac * 360), sweep = Math.floor(secFrac * 360), step = 5;
+    for (let start = first - first % step; start < sweep; start += step) {
       const end = Math.min(start + step, sweep);
       const color = paletteColor(SYNTH_RING_COLORS, (start + step / 2) / 360);
-      s += arcPath(240, 240, 234, 4, 270 + start, 270 + end, color, opa, 'butt');
+      s += arcPath(240, 240, 234, 4, 270 + Math.max(start, first), 270 + end, color, opa, 'butt');
     }
     return s + '</g>';
+  }
+
+  function settingsGear(color, opa) {
+    const { cx, cy } = SETTINGS_GEAR;
+    let teeth = '';
+    for (let i = 0; i < 8; i++) {
+      teeth += `<rect x="${cx - 2.5}" y="${cy - 10}" width="5" height="6" rx="1" transform="rotate(${i * 45} ${cx} ${cy})"/>`;
+    }
+    return `<g class="settings-gear" fill="${color}" opacity="${opa.toFixed(3)}">${teeth}` +
+      `<circle cx="${cx}" cy="${cy}" r="5.5" fill="none" stroke="${color}" stroke-width="4"/></g>`;
   }
 
   function synthBackdrop(opa, now) {
@@ -716,6 +866,208 @@
     return s + '</g>';
   }
 
+  // Danish woven Christmas heart in felt (mirrors draw_heart_face() in src/ui/ui.cpp).
+  function heartFace(circle, line, poly, arc, snowflake) {
+    const felt = '#163A2A', feltRim = '#0E2A1D', green = '#3E8A55', cream = '#F1E6CC';
+    const stitchGreen = '#2B6640', red = '#D6343B', darkRed = '#9E2229', muted = '#7FA58B';
+    circle(240, 240, 221, feltRim);
+    circle(240, 240, 219, felt);
+    for (let a = 0; a < 360; a += 6) arc(240, 240, 212, 2, a, a + 3, cream);
+
+    poly([[234, 28], [246, 28], [246, 70], [234, 70]], green);
+    circle(240, 34, 6, green);
+    for (let y = 32; y < 62; y += 7) {
+      line(237, y, 237, y + 4, 1, cream);
+      line(243, y, 243, y + 4, 1, cream);
+    }
+
+    const hx = 240, hy = 106, d = 38, lobe = d * 0.70710678;
+    circle(Math.round(hx - d / 2), Math.round(hy - d / 2), Math.round(lobe), green);
+    circle(Math.round(hx + d / 2), Math.round(hy - d / 2), Math.round(lobe), cream);
+    const at = (a, b) => [Math.round(hx - d + (a + b) * d), Math.round(hy + (b - a) * d)];
+    const n = 4;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        const a0 = i / n, a1 = (i + 1) / n, b0 = j / n, b1 = (j + 1) / n;
+        const light = (i + j) % 2 !== 0;
+        poly([at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)], light ? cream : green);
+        if (light) {
+          const [cx, cy] = at((a0 + a1) / 2, (b0 + b1) / 2);
+          line(cx - 3, cy, cx + 3, cy, 1, stitchGreen);
+          line(cx, cy - 3, cx, cy + 3, 1, stitchGreen);
+        }
+      }
+    }
+    const lobeR = Math.round(lobe) + 5;
+    for (let a = 135; a < 315; a += 15) {
+      arc(Math.round(hx - d / 2), Math.round(hy - d / 2), lobeR, 2, a, a + 7, cream);
+      arc(Math.round(hx + d / 2), Math.round(hy - d / 2), lobeR, 2, a + 90, a + 97, cream);
+    }
+    for (let k = 0; k < 6; k++) {
+      const t0 = (k + 0.15) / 6, t1 = (k + 0.6) / 6, off = 3.5;
+      line(Math.round(hx - d + t0 * d - off), Math.round(hy + t0 * d + off),
+        Math.round(hx - d + t1 * d - off), Math.round(hy + t1 * d + off), 2, cream);
+      line(Math.round(hx + d - t0 * d + off), Math.round(hy + t0 * d + off),
+        Math.round(hx + d - t1 * d + off), Math.round(hy + t1 * d + off), 2, cream);
+    }
+
+    snowflake(Math.round(hx - d / 2 - 3), Math.round(hy - d / 2 - 3), 8, cream);
+    line(259, 104, 266, 78, 1, stitchGreen);
+    line(263, 92, 256, 86, 1, stitchGreen);
+    for (const [x, y] of [[266, 76], [270, 84], [255, 84], [262, 98], [268, 94]]) circle(x, y, 2, red);
+
+    poly([[237, 70], [226, 90], [233, 92], [240, 74]], red);
+    poly([[243, 70], [254, 90], [247, 92], [240, 74]], red);
+    circle(229, 64, 9, red);
+    circle(251, 64, 9, red);
+    circle(229, 64, 3, darkRed);
+    circle(251, 64, 3, darkRed);
+    circle(240, 68, 5, darkRed);
+    circle(236, 74, 4, '#FAF6EE');
+    circle(244, 74, 4, '#FAF6EE');
+
+    const leaf = (bx, by, tx, ty) => {
+      const vx = tx - bx, vy = ty - by, len = Math.hypot(vx, vy), nx = -vy / len * 7, ny = vx / len * 7;
+      poly([[bx, by], [bx + vx / 3 + nx, by + vy / 3 + ny], [bx + vx * 2 / 3 + nx, by + vy * 2 / 3 + ny],
+        [tx, ty], [bx + vx * 2 / 3 - nx, by + vy * 2 / 3 - ny], [bx + vx / 3 - nx, by + vy / 3 - ny]], green);
+      line(bx, by, tx, ty, 1, stitchGreen);
+    };
+    leaf(240, 398, 203, 386);
+    leaf(240, 398, 277, 386);
+    leaf(240, 398, 240, 372);
+    circle(234, 402, 5, red);
+    circle(246, 402, 5, red);
+    circle(240, 394, 5, red);
+    circle(232, 400, 1, '#F6B0B0');
+    circle(244, 400, 1, '#F6B0B0');
+
+    snowflake(110, 128, 7, muted);
+    snowflake(370, 128, 7, muted);
+    snowflake(98, 342, 6, muted);
+    snowflake(382, 342, 6, muted);
+  }
+
+  // Candy canes bent into a heart, peppermints and sprinkles (mirrors draw_candy_face()).
+  function candyFace(circle, line, poly, arc) {
+    const cream = '#FFF3E8', rim = '#C8102E', outline = '#E7B9C1';
+    circle(240, 240, 221, rim);
+    circle(240, 240, 217, cream);
+    for (const [x, y, dx, dy, color] of [[126, 118, 7, -4, '#F48FB1'], [150, 92, 7, 3, '#7FD8BE'],
+      [336, 94, -7, 3, '#FFD166'], [360, 120, 6, 5, '#7EC8E3'], [62, 205, 3, 7, '#FFD166'],
+      [418, 292, -3, 7, '#F48FB1'], [112, 334, 7, 2, '#7EC8E3'], [368, 334, -7, 2, '#7FD8BE'],
+      [80, 280, 6, -4, '#7FD8BE'], [404, 172, -6, -4, '#F48FB1'], [196, 52, 7, 2, '#FFD166'],
+      [286, 52, -7, 2, '#7EC8E3']]) {
+      line(x - idiv(dx, 2), y - idiv(dy, 2), x + idiv(dx, 2), y + idiv(dy, 2), 4, color);
+    }
+
+    const r = 18, w = 9, cy = 84, tipY = 148;
+    for (const side of [-1, 1]) {
+      const cx = 240 + side * r, outerX = 240 + side * 2 * r;
+      arc(cx, cy, r + idiv(w, 2) + 2, w + 4, 180, 360, outline);
+      line(outerX, cy, 240, tipY, w + 4, outline);
+      let stripe = 0;
+      for (let a = 180; a < 360; a += 30, stripe++) arc(cx, cy, r + idiv(w, 2), w, a, a + 30, stripe % 2 ? CANDY.white : CANDY.red);
+      const pieces = 8;
+      for (let k = 0; k < pieces; k++, stripe++) {
+        line(outerX + idiv((240 - outerX) * k, pieces), cy + idiv((tipY - cy) * k, pieces),
+          outerX + idiv((240 - outerX) * (k + 1), pieces), cy + idiv((tipY - cy) * (k + 1), pieces), w,
+          stripe % 2 ? CANDY.white : CANDY.red);
+      }
+    }
+
+    const peppermint = (x, y, pr) => {
+      circle(x, y, pr + 2, CANDY.red);
+      circle(x, y, pr, CANDY.white);
+      for (let a = 0; a < 360; a += 45) arc(x, y, pr - 2, pr - 4, a, a + 22, CANDY.red);
+      circle(x, y, Math.max(3, idiv(pr, 5)), CANDY.white);
+    };
+    peppermint(176, 392, 16);
+    peppermint(304, 392, 16);
+    peppermint(240, 404, 22);
+    poly([[214, 404], [204, 396], [204, 412]], '#F7C5CF');
+    poly([[266, 404], [276, 396], [276, 412]], '#F7C5CF');
+  }
+
+  function candyRing(startFrac, secFrac, opa) {
+    let s = '<g class="candy-ring">';
+    const first = Math.floor(startFrac * 360), sweep = Math.floor(secFrac * 360), step = 6;
+    for (let start = first - first % step; start < sweep; start += step) {
+      const end = Math.min(start + step, sweep);
+      s += arcPath(240, 240, 234, 4, 270 + Math.max(start, first), 270 + end,
+        (start / step) % 2 ? CANDY.white : CANDY.red, opa, 'butt');
+    }
+    return s + '</g>';
+  }
+
+  function extraBackdrop(face, opa) {
+    const alpha = opa.toFixed(3);
+    let s = `<g class="${face}-backdrop">`;
+    const circle = (x, y, r, color) => {
+      s += `<circle cx="${x}" cy="${y}" r="${r}" fill="${color}" opacity="${alpha}"/>`;
+    };
+    const line = (x, y, endX, endY, width, color) => {
+      s += `<path d="M${x} ${y} L${endX} ${endY}" stroke="${color}" stroke-width="${width}" opacity="${alpha}"/>`;
+    };
+    const poly = (pts, color) => {
+      s += `<path d="M${pts.map(([x, y]) => `${Math.round(x)} ${Math.round(y)}`).join(' L')}Z" fill="${color}" opacity="${alpha}"/>`;
+    };
+    const arc = (x, y, r, w, a0, a1, color) => { s += arcPath(x, y, r, w, a0, a1, color, opa, 'butt'); };
+    const snowflake = (x, y, r, color) => {
+      const d = idiv(r * 7, 8), h = idiv(r, 2);
+      line(x, y - r, x, y + r, 1, color);
+      line(x - d, y - h, x + d, y + h, 1, color);
+      line(x - d, y + h, x + d, y - h, 1, color);
+    };
+    if (face === 'heart') {
+      heartFace(circle, line, poly, arc, snowflake);
+      return s + '</g>';
+    }
+    if (face === 'candy') {
+      candyFace(circle, line, poly, arc);
+      return s + '</g>';
+    }
+    if (face === 'nineties') {
+      circle(240, 240, 221, '#7A59C9');
+      circle(240, 240, 218, '#211638');
+      for (const [x, y, r, color] of [[150, 100, 5, '#FF69B4'], [330, 100, 5, '#FFE56D'],
+        [75, 190, 4, '#63EBD0'], [405, 205, 5, '#FF69B4'], [105, 290, 5, '#FFE56D'],
+        [375, 295, 4, '#63EBD0'], [160, 382, 5, '#FF69B4'], [320, 382, 5, '#FFE56D']]) {
+        circle(x, y, r, color);
+      }
+      for (const [x, y, endX, endY, width, color] of [
+        [192, 88, 206, 75, 4, '#63EBD0'], [206, 75, 220, 88, 4, '#63EBD0'],
+        [220, 88, 234, 75, 4, '#63EBD0'], [252, 81, 266, 96, 4, '#FF69B4'],
+        [266, 96, 280, 81, 4, '#FF69B4'], [280, 81, 294, 96, 4, '#FF69B4'],
+        [189, 391, 210, 375, 4, '#FFE56D'], [210, 375, 228, 391, 4, '#FFE56D'],
+        [252, 391, 270, 375, 4, '#63EBD0'], [270, 375, 291, 391, 4, '#63EBD0'],
+        [120, 139, 131, 150, 3, '#FFE56D'], [131, 139, 120, 150, 3, '#FFE56D'],
+        [349, 139, 360, 150, 3, '#63EBD0'], [360, 139, 349, 150, 3, '#63EBD0']]) {
+        line(x, y, endX, endY, width, color);
+      }
+    } else {
+      circle(240, 240, 221, '#527897');
+      circle(240, 240, 218, '#102B43');
+      for (const [x, y, r] of [[150, 92, 3], [188, 65, 2], [240, 57, 3], [293, 67, 2],
+        [330, 94, 3], [116, 145, 2], [363, 145, 2], [79, 205, 3], [400, 205, 3],
+        [75, 274, 2], [404, 274, 2], [112, 325, 3], [368, 325, 3],
+        [158, 367, 2], [322, 367, 2], [183, 401, 3], [297, 401, 3]]) {
+        circle(x, y, r, '#B9DAE8');
+      }
+      for (const [x, y, endX, endY] of [[224, 401, 209, 380], [209, 380, 208, 367],
+        [211, 384, 198, 379], [256, 401, 271, 380], [271, 380, 272, 367], [269, 384, 282, 379]]) {
+        line(x, y, endX, endY, 4, '#D8B08A');
+      }
+      circle(216, 406, 9, '#B7794E');
+      circle(264, 406, 9, '#B7794E');
+      circle(240, 412, 25, '#B7794E');
+      circle(232, 408, 2, '#172638');
+      circle(248, 408, 2, '#172638');
+      circle(240, 421, 10, '#E2B993');
+      circle(240, 419, 5, '#E74F5F');
+    }
+    return s + '</g>';
+  }
+
   function renderMain(state) {
     const { core, scene, now, date, countUp } = state;
     const txt = strings(state.lang);
@@ -734,39 +1086,42 @@
     const shiftY = Math.round(radius * Math.cos(shiftAngle));
     const idleOpa = clamp01(scene.idle.value(t).opa);
     const themeOpa = idleOpa * (1 - saverLevel);
-    const synthFace = state.clockFace === 'synthwave', flowerFace = state.clockFace === 'flower-power';
-    const christmasFace = state.clockFace === 'christmas';
+    const face = FACE_PALETTE[state.clockFace] ? state.clockFace : 'classic';
+    const synthFace = face === 'synthwave', flowerFace = face === 'flower-power';
+    const christmasFace = face === 'christmas', candyFace = face === 'candy';
     const synth = synthFace ? themeOpa : 0;
     const ringOpa = idleOpa * (1 - ringFade);
-    const themed = (classic, neon, floral, winter) => christmasFace ? mix(winter, classic, themeOpa) :
-      flowerFace ? mix(floral, classic, themeOpa) :
-      synth > 0 ? mix(neon, classic, synth) : classic;
+    const palette = FACE_PALETTE[face];
+    const themed = key => face === 'classic' ? palette[key] : mix(palette[key], FACE_PALETTE.classic[key], themeOpa);
     if (synth > 0.01) s += synthBackdrop(synth, t);
     if (flowerFace && themeOpa > 0.01) s += flowerBackdrop(themeOpa, ringOpa, date.getSeconds());
     if (christmasFace && themeOpa > 0.01) s += christmasBackdrop(themeOpa);
+    if (EXTRA_FACES.includes(face) && themeOpa > 0.01) s += extraBackdrop(face, themeOpa);
     const clk = scene.clock.value(t);
     const h = Math.round(clk.r), top = Math.round(clk.cy - clk.r / 2);
     if (idleOpa > 0.01) {
       if (!flowerFace && ringOpa > 0.01) {
-        s += arcPath(240, 240, 234, 4, 0, 360,
-          themed('#1A1A1C', '#321841', FLOWER.ink, CHRISTMAS.track), ringOpa * (1 - saverLevel / 3));
-        const secFrac = (date.getSeconds() * 10 + idiv(date.getMilliseconds(), 100)) / 600;
-        const secondsColor = christmasFace ? mix(CHRISTMAS.gold, TIMER_COLORS[0], themeOpa) : TIMER_COLORS[0];
-        s += synth > 0.01 ? synthRing(secFrac, ringOpa) :
-          arcPath(240, 240, 234, 4, 270, 270 + 360 * secFrac, mix(saverAccent, secondsColor, saverLevel), ringOpa);
+        s += arcPath(240, 240, 234, 4, 0, 360, themed('track'), ringOpa * (1 - saverLevel / 3));
+        // Second 0 erases the previous minute clockwise (see ui_update in src/ui/ui.cpp).
+        const sec = date.getSeconds(), ms = date.getMilliseconds();
+        const startFrac = sec === 0 ? Math.floor(ms * 360 / 1000) / 360 : 0;
+        const secFrac = sec === 0 ? 1 : (sec * 10 + idiv(ms, 100)) / 600;
+        s += synth > 0.01 ? synthRing(startFrac, secFrac, ringOpa) :
+          candyFace && themeOpa > 0.01 ? candyRing(startFrac, secFrac, ringOpa) :
+          arcPath(240, 240, 234, 4, 270 + 360 * startFrac, 270 + 360 * secFrac, mix(saverAccent, themed('ring'), saverLevel), ringOpa);
       }
-      const dateColor = mix(themed(COLOR_MUTED, '#A4F5FF', '#6C304A', CHRISTMAS.gold), saverAccent, 1 - saverLevel * 3 / 8);
+      const dateColor = mix(themed('date'), saverAccent, 1 - saverLevel * 3 / 8);
       s += text(240 + shiftX, top + shiftY + h + 34 + LINE_H[28] / 2, 28, dateColor,
         txt.date(txt, date), 500, idleOpa);
       const hintOpa = themeOpa;
       if (hintOpa > 0.01) {
-        const size = synthFace || flowerFace || christmasFace ? 14 : 20;
-        const hintTop = flowerFace ? 348 : christmasFace ? 344 : synthFace ? 342 : 372;
-        s += text(240 + shiftX, hintTop + shiftY + LINE_H[size] / 2,
-          size, themed(COLOR_FAINT, '#D6B2F2', '#3D5C4E', '#A6C3B4'), txt.hint, 500, hintOpa);
+        const size = face !== 'classic' ? 14 : 20;
+        const hintColor = themed('hint');
+        s += text(240 + shiftX, palette.hintTop + shiftY + LINE_H[size] / 2, size, hintColor, txt.hint, 500, hintOpa);
+        s += settingsGear(hintColor, hintOpa);
       }
     }
-    const clockColor = mix(mix(themed(COLOR_TEXT, '#FFD4F7', FLOWER.ink, CHRISTMAS.snow), COLOR_MUTED, Math.round(idleOpa * 255) / 255),
+    const clockColor = mix(mix(themed('clock'), COLOR_MUTED, Math.round(idleOpa * 255) / 255),
       saverAccent, 1 - saverLevel);
     s += segCentered(240 + shiftX, top + shiftY, h, clockText(date), clockColor);
 
@@ -781,11 +1136,23 @@
       const i = core.timers.findIndex(tm => tm.color === c);
       if (i >= 0) {
         const prev = scene.content[c];
-        scene.content[c] = cardContent(core, i, now, countUp, txt);
-        if (scene.content[c].tooHard && prev && !prev.tooHard) scene.pulse(c, PULSE.pressure, t);
+        const next = cardContent(core, i, now, countUp, txt);
+        if (next.smiley) {
+          const same = prev && prev.id === next.id;
+          if (same && prev.smiley) {
+            Object.assign(next, { smileyStart: prev.smileyStart, rating: prev.rating, quadFill: prev.quadFill,
+              frozenText: prev.frozenText, frozenStatus: prev.frozenStatus });
+          } else {
+            // Static renders (docs) can start part-way into the animation via smileyAgeMs.
+            Object.assign(next, { smileyStart: t - (same ? 0 : state.smileyAgeMs || 0), rating: core.rating(i, now),
+              quadFill: next.quads, frozenText: same ? prev.text : next.text, frozenStatus: same ? prev.status : '' });
+          }
+        }
+        scene.content[c] = next;
+        if (next.tooHard && prev && !prev.tooHard) scene.pulse(c, PULSE.pressure, t);
       }
       if (g.opa <= 0.01 || g.r < 10 || !scene.content[c]) continue;
-      s += renderCard(scene.content[c], g);
+      s += renderCard(scene.content[c], g, t);
     }
 
     const a = scene.add.value(t);
@@ -852,7 +1219,7 @@
       `<g transform="translate(${bezel} ${bezel})" clip-path="url(#screen)"><rect width="480" height="480" fill="#000"/>${content}</g></svg>`;
   }
 
-  const api = { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, formatMMSS, renderSVG, segWidth, SETTINGS_BUTTONS, MAX_TIMERS, PULSE, STRINGS, LANGS, CLOCK_FACES };
+  const api = { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, formatMMSS, renderSVG, segWidth, SETTINGS_BUTTONS, MAX_TIMERS, PULSE, STRINGS, LANGS, CLOCK_FACES, SETTINGS_GEAR };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BrushSim = api;
 })(typeof window !== 'undefined' ? window : globalThis);

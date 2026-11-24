@@ -28,6 +28,9 @@ typedef struct {
     const char *clock_face;
     const char *classic;
     const char *christmas;
+    const char *reindeer;
+    const char *heart;
+    const char *candy;
     const char *ok;
     const char *quadrants[4]; /* upper right, lower right, lower left, upper left */
     const char *weekdays[7];  /* Sunday first, like struct tm */

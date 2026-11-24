@@ -24,6 +24,7 @@ namespace {
 constexpr uint32_t BRUSH_DURATION_MS = 2 * 60 * 1000;
 constexpr uint32_t BRUSH_MARK_MS = 30 * 1000;
 constexpr uint32_t AUTO_CLEAR_MS = 60 * 1000; // finished timers disappear after 1 min overtime
+constexpr uint32_t FINISH_HOLD_MS = 6 * 1000;  // a cancelled timer shows its smiley this long
 constexpr brush_lang_t DEFAULT_LANG = BRUSH_LANG_DA; // until changed in settings
 
 constexpr uint8_t BRIGHTNESS_ACTIVE = 90;
@@ -272,7 +273,7 @@ void app_timer_tapped(int index)
     if (index >= s_core.count) {
         return;
     }
-    if (s_core.timers[index].state == BT_DONE) {
+    if (s_core.timers[index].state == BT_DONE || s_core.timers[index].finishing) {
         brush_remove(&s_core, index);
     } else if (s_core.timers[index].source == BRUSH_SRC_ORALB) {
         return; // the toothbrush's power button pauses/resumes these
@@ -283,7 +284,7 @@ void app_timer_tapped(int index)
 
 void app_timer_long_pressed(int index)
 {
-    brush_remove(&s_core, index);
+    brush_finish(&s_core, index, millis());
 }
 
 void app_open_settings()
@@ -291,6 +292,13 @@ void app_open_settings()
     struct tm now;
     get_local_time(&now, nullptr);
     ui_open_settings(&now, s_settings);
+}
+
+void app_change_clock_face(bool next)
+{
+    const int step = next ? 1 : CLOCK_FACE_COUNT - 1;
+    s_settings.clock_face = static_cast<ClockFace>((s_settings.clock_face + step) % CLOCK_FACE_COUNT);
+    save_settings();
 }
 
 void app_settings_done(int hour, int minute, bool time_changed, const UiSettings &settings)
@@ -330,7 +338,7 @@ void setup()
     buzzer_init();
     buzzer_enable(s_settings.sound);
 
-    brush_cfg_t cfg = {BRUSH_DURATION_MS, BRUSH_MARK_MS, AUTO_CLEAR_MS};
+    brush_cfg_t cfg = {BRUSH_DURATION_MS, BRUSH_MARK_MS, AUTO_CLEAR_MS, FINISH_HOLD_MS};
     brush_init(&s_core, &cfg);
 
     init_lvgl();

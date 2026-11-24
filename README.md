@@ -17,13 +17,22 @@ slowly cycles through neon colors, and a seconds ring that reveals a fixed gradi
 progresses. **Flower Power** takes its cue from late-'60s screen prints: a cream dial, bold
 daisies, curved stripes, and a rim that lights one dot or daisy per second, then resets each
 minute. **Christmas** (Danish: **Jul**) pairs a deep evergreen dial with hanging ornaments,
-a little winter forest, and a gold seconds sweep. Hold the idle clock to open Settings, tap **Face** (Danish:
-**Urskive**) to cycle the options, then tap **Done** to save. The browser simulator also has a
+a little winter forest, and a gold seconds sweep. **90s** uses bright Memphis-inspired shapes,
+while **Reindeer** (Danish: **Rensdyr**) has a snowy night and a reindeer. **Woven Heart** (Danish:
+**Julehjerte**) is a felt-style Danish braided heart with a red bow, pom-poms and embroidery on a
+stitched green dial, and **Candy Cane** (Danish: **Slikstok**) bends two candy canes into a heart above
+peppermints and sprinkles, with a red-and-white striped seconds ring. Hold the idle clock (or tap the gear) to open Settings, tap **Face** (Danish:
+**Urskive**) to cycle the options, then tap **Done** to save. Alternatively, swipe left or right
+on the idle clock to change and save the face. The browser simulator also has a
 **Clock face** selector. Timer screens and the long-idle screensaver are shared by all faces.
 
 | Synthwave | Flower Power | Christmas |
 | :---: | :---: | :---: |
 | ![Synthwave clock face](docs/screens/14-synthwave.svg) | ![Flower Power clock face](docs/screens/15-flower-power.svg) | ![Christmas clock face](docs/screens/16-christmas.svg) |
+
+| 90s | Reindeer | Woven Heart | Candy Cane |
+| :---: | :---: | :---: | :---: |
+| ![90s clock face](docs/screens/17-nineties.svg) | ![Reindeer clock face](docs/screens/18-reindeer.svg) | ![Woven Heart clock face](docs/screens/19-woven-heart.svg) | ![Candy Cane clock face](docs/screens/20-candy-cane.svg) |
 
 ### Long-idle screensaver
 
@@ -76,8 +85,12 @@ Last timer removed – the ring shrinks away and the big clock returns:
   quadrants (upper right → lower right → lower left → upper left), one per 30 seconds.
 - **Several timers at once** – up to 4 (one per family member, each in its own color). The layout
   adapts: one big ring, two side by side, or a 2×2 grid with a "+" slot.
-- **Countdown or count-up** – selectable in settings. After 2:00 the ring turns green and keeps
-  counting the overtime; finished timers disappear automatically after 1 minute.
+- **Countdown or count-up** – selectable in settings. At 2:00 the ring morphs into a star-eyed
+  smiley; finished timers disappear automatically after 1 minute.
+- **Finish smiley** – when a timer finishes, its digits fade and the ring contracts into a smiley
+  in the timer's color that rates the brushing: under 30 s a straight mouth, 30–59 s a half smile,
+  60–90 s a smile, 91–120 s a smile with twinkling gold star eyes. A cancelled timer shows its
+  smiley for 6 s before disappearing. Preview: [preview/smileys.html](preview/smileys.html).
 - **Smooth transitions** – every layout change is animated (eased moves, springy ring bloom,
   fades); rings "breathe" briefly on each 30 s mark and with a bigger pulse when done; the
   settings screen cross-fades; the backlight fades in on boot and fades when dimming/waking.
@@ -108,9 +121,12 @@ Last timer removed – the ring shrinks away and the big clock returns:
 | Where | Tap | Hold (0.7 s) |
 | --- | --- | --- |
 | Idle clock | start a timer | open settings |
-| Timer ring | pause / resume (dismiss when done) | cancel the timer |
-| Toothbrush ring | – while brushing (dismiss when done) | dismiss the timer |
+| ⚙ gear (right of the idle clock) | open settings (set the time, mode, sound, face, language) | – |
+| Timer ring | pause / resume (dismiss when done or showing a smiley) | cancel the timer (shows its smiley for 6 s) |
+| Toothbrush ring | – while brushing (dismiss when done or showing a smiley) | dismiss the timer (shows its smiley for 6 s) |
 | **+** button / empty slot | add another timer | – |
+
+Swipe left or right on the idle clock to cycle clock faces.
 
 **Settings** lets you set the time (hold the arrows to repeat), switch countdown/count-up,
 mute the buzzer and change the language. Settings are stored in flash (NVS); the time is
