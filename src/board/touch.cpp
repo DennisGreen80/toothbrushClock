@@ -1,17 +1,20 @@
 #include "board/touch.h"
 
-#include <Arduino.h>
-#include <Wire.h>
-
 #include "board/exio.h"
+#include "board/hal.h"
+#include "board/i2c_bus.h"
 #include "board/pins.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
 
 namespace {
 
+constexpr const char *TAG = "touch";
 constexpr uint16_t REG_STATUS = 0x814E;
 constexpr uint16_t REG_POINT1 = 0x8150;
 constexpr uint16_t REG_PRODUCT_ID = 0x8140;
 
+i2c_master_dev_handle_t s_dev = nullptr;
 bool s_present = false;
 bool s_last_pressed = false;
 uint16_t s_last_x = 0;
@@ -20,52 +23,35 @@ uint8_t s_empty_samples = 0;
 // A single empty sample mid-swipe would end the gesture early; require this many in a row.
 constexpr uint8_t RELEASE_SAMPLES = 2;
 
-bool read_regs(uint16_t reg, uint8_t *buf, uint8_t len)
-{
-    Wire.beginTransmission(I2C_ADDR_GT911);
-    Wire.write(reg >> 8);
-    Wire.write(reg & 0xFF);
-    if (Wire.endTransmission() != 0) {
-        return false;
-    }
-    if (Wire.requestFrom((uint8_t)I2C_ADDR_GT911, len) != len) {
-        return false;
-    }
-    for (uint8_t i = 0; i < len; i++) {
-        buf[i] = Wire.read();
-    }
-    return true;
-}
+bool read_regs(uint16_t reg, uint8_t *buf, uint8_t len) { return i2c_read_reg(s_dev, reg, 2, buf, len); }
 
-void write_reg(uint16_t reg, uint8_t value)
-{
-    Wire.beginTransmission(I2C_ADDR_GT911);
-    Wire.write(reg >> 8);
-    Wire.write(reg & 0xFF);
-    Wire.write(value);
-    Wire.endTransmission();
-}
+void write_reg(uint16_t reg, uint8_t value) { i2c_write_reg(s_dev, reg, 2, &value, 1); }
 
 } // namespace
 
 bool touch_init()
 {
     // Holding INT low while releasing reset selects I2C address 0x5D.
-    pinMode(PIN_TOUCH_INT, OUTPUT);
-    digitalWrite(PIN_TOUCH_INT, LOW);
+    const gpio_num_t int_pin = (gpio_num_t)PIN_TOUCH_INT;
+    gpio_reset_pin(int_pin);
+    gpio_set_direction(int_pin, GPIO_MODE_OUTPUT);
+    gpio_set_level(int_pin, 0);
     exio_write(EXIO_TOUCH_RST, false);
-    delay(10);
+    delay_ms(10);
     exio_write(EXIO_TOUCH_RST, true);
-    delay(60);
-    pinMode(PIN_TOUCH_INT, INPUT);
-    delay(100);
+    delay_ms(60);
+    gpio_set_direction(int_pin, GPIO_MODE_INPUT);
+    delay_ms(100);
 
+    if (!s_dev) {
+        s_dev = i2c_bus_add(I2C_ADDR_GT911);
+    }
     uint8_t id[4] = {0};
     s_present = read_regs(REG_PRODUCT_ID, id, 4);
     if (s_present) {
-        Serial.printf("[touch] GT%c%c%c%c found\n", id[0], id[1], id[2], id[3]);
+        ESP_LOGI(TAG, "GT%c%c%c%c found", id[0], id[1], id[2], id[3]);
     } else {
-        Serial.println("[touch] GT911 not found");
+        ESP_LOGE(TAG, "GT911 not found");
     }
     return s_present;
 }

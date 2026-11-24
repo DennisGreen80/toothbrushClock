@@ -1,9 +1,12 @@
 #include "board/buzzer.h"
 
-#include <Arduino.h>
-
 #include "board/exio.h"
+#include "board/hal.h"
 #include "board/pins.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 
 namespace {
 
@@ -42,7 +45,7 @@ void buzzer_task(void *)
         }
         const uint16_t *p = pattern_for(beep);
         if (!p) {
-            Serial.printf("[buzzer] unknown cue: %u\n", static_cast<unsigned>(beep));
+            ESP_LOGW("buzzer", "unknown cue: %u", static_cast<unsigned>(beep));
             continue;
         }
         for (int step = 0; p[step] != 0 && s_enabled; step++) {
@@ -69,7 +72,7 @@ void buzzer_init()
 {
     exio_write(EXIO_BUZZER, false);
     s_queue = xQueueCreate(4, sizeof(Beep));
-    // Core 0, above the Arduino loop priority, so patterns are not stretched by rendering.
+    // Core 0, above the UI task priority, so patterns are not stretched by rendering.
     xTaskCreatePinnedToCore(buzzer_task, "buzzer", 2048, nullptr, 5, nullptr, 0);
 }
 

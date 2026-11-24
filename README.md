@@ -170,8 +170,7 @@ pairs, so the Oral-B app keeps working normally and nothing needs to be set up.
 - **Pressure colors:** the passive advertisement only carries a "too hard" flag. The brush's
   white/green distinction (too soft vs. optimal) is only available over an active GATT connection,
   so the ring stays neutral white instead of turning green.
-- BLE scanning uses [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) (downloaded by
-  PlatformIO). Protocol details are based on the open-source
+- BLE scanning uses the NimBLE host built into ESP-IDF. Protocol details are based on the open-source
   [oralb-ble](https://github.com/Bluetooth-Devices/oralb-ble) parser.
 
 ## Previews
@@ -187,42 +186,65 @@ code, so the screenshots match the device geometry. Keep it in sync when changin
 
 ## Building and flashing
 
-Requires [PlatformIO](https://platformio.org/) (VS Code extension or CLI). Libraries (LVGL 8.3,
-NimBLE-Arduino) are downloaded automatically.
+The firmware is an [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/v6.1.1/esp32s3/)
+project (ESP-IDF **6.1.1**, LVGL **9.6**) built with [pioarduino](https://github.com/pioarduino/platform-espressif32),
+the community fork of PlatformIO's ESP32 platform (VS Code extension or CLI). `platformio.ini` pins
+pioarduino **61.04.00**, which ships ESP-IDF 6.1.1; the toolchain, ESP-IDF and LVGL (from the
+component registry) are downloaded on the first build.
 
 ```sh
-pio run -e waveshare_28c                 # build
+pio run -e waveshare_28c                 # build (the default environment)
 pio run -e waveshare_28c -t upload       # flash via the USB-C "UART" port
-pio device monitor                       # serial log at 115200 baud
+pio device monitor -e waveshare_28c      # serial log at 115200 baud
 pio test -e native                       # unit tests for the timer logic (needs a host C compiler)
 ```
 
 If the upload doesn't start automatically, hold **BOOT**, tap **RESET**, release **BOOT** and retry.
+Settings saved by the earlier Arduino firmware are kept (same NVS partition, namespace and keys).
+It is a regular ESP-IDF project, so `idf.py set-target esp32s3` + `idf.py build flash monitor` works too.
 
-The display refreshes at ~57 Hz (16 MHz pixel clock). If the picture ever shifts sideways or tears,
-the PSRAM frame buffer can't keep up: lower the clock with `-DLCD_PIXEL_CLOCK_MHZ=14` (or 12) in
-`build_flags`. Below ~12 MHz colored backgrounds start to visibly pulse in intensity.
+`sdkconfig.defaults` holds the project configuration (flash/PSRAM, NimBLE, LVGL). pioarduino keeps
+the resulting configuration in `sdkconfig.waveshare_28c` (idf.py: `sdkconfig`); values already in
+that file win over the defaults, so delete it after editing `sdkconfig.defaults`.
+`pio run -e waveshare_28c -t menuconfig` (or `idf.py menuconfig`) → **Toothbrush timer** has the display tunables:
+
+| Option | Default | |
+| --- | --- | --- |
+| LCD pixel clock (MHz) | 18 | ~65 Hz refresh. Below ~12 MHz colored backgrounds pulse in intensity |
+| LCD bounce buffer height (lines) | 10 | lines per internal-RAM bounce buffer (4–40, must divide 480) |
+
+The RGB panel scans out a frame buffer in PSRAM. With bounce buffers the LCD DMA reads from two
+small internal-RAM buffers that the CPU refills from PSRAM, so heavy PSRAM traffic (LVGL rendering,
+flash writes) no longer starves the panel – the cause of the sideways drift seen above 16 MHz in the
+Arduino build. If the picture ever shifts or tears, lower the pixel clock or raise the bounce lines.
 
 ## Project layout
 
 ```
-platformio.ini            board + build configuration (ESP32-S3, 16 MB flash, 8 MB OPI PSRAM)
-include/lv_conf.h         LVGL configuration
-lib/brush_core/           platform-independent logic (unit tested)
+platformio.ini            pioarduino build (ESP-IDF 6.1.1) + native unit-test environment
+CMakeLists.txt            ESP-IDF project
+sdkconfig.defaults        ESP32-S3, 16 MB flash, 8 MB octal PSRAM, NimBLE, LVGL configuration
+partitions.csv            NVS + 6 MB app
+main/                     ESP-IDF component that builds src/ (CMakeLists, idf_component.yml
+                          with the LVGL dependency, Kconfig "Toothbrush timer" menu)
+lib/brush_core/           platform-independent logic (unit tested; also an ESP-IDF component)
   brush_core.*            timers, 30 s marks, screen layout
   brush_scene.*           animated scene: tweens/easing between layouts, ring pulses
   brush_i18n.*            English/Danish strings and date format
   brush_oralb.*           Oral-B advertisement parser + brush-to-timer tracking
-src/main.cpp              setup/loop, LVGL glue, timekeeping, settings, app actions
+src/main.cpp              app_main + UI task, LVGL glue, timekeeping, settings (NVS), app actions
 src/board/                hardware drivers
   pins.h                  pin map (from the board schematic)
+  hal.h                   millis()/delay_ms()
+  i2c_bus.*               shared I2C master bus
   exio.*                  TCA9554 IO expander (LCD/touch reset, LCD CS, buzzer)
-  display.*               ST7701 init over 3-wire SPI + RGB565 panel + PWM backlight
+  display.*               ST7701 init over 3-wire SPI + RGB565 panel (bounce buffers) + PWM backlight
   touch.*                 GT911 touch controller
   rtc_pcf85063.*          PCF85063 real-time clock
   buzzer.*                buzzer sound patterns (FreeRTOS task)
-  oralb_scanner.*         passive BLE scan (NimBLE) for Oral-B advertisements
+  oralb_scanner.*         passive BLE scan (ESP-IDF NimBLE) for Oral-B advertisements
 src/ui/                   LVGL user interface
+  lv_compat.h             small LVGL 9 helpers
   seg_digits.*            scalable segment-style digits (custom drawn)
   brush_icon.*            scalable toothbrush icon (custom drawn)
   ui.*                    idle clock, adaptive timer rings, settings screen
@@ -231,7 +253,6 @@ src/ui/                   LVGL user interface
 test/test_brush_core/     Unity tests for lib/brush_core
 preview/                  browser simulator + SVG screenshot renderer
 ```
-
 ## Hardware notes
 
 | Function | Connection |

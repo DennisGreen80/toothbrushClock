@@ -1,27 +1,32 @@
 #include "board/display.h"
 
-#include <Arduino.h>
 #include <string.h>
 
 #include "board/exio.h"
+#include "board/hal.h"
 #include "board/pins.h"
+#include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
 
 namespace {
 
-// Refresh rate = pclk / (548 * 508) with the timings below. ~29 Hz (8 MHz) made colored
-// backgrounds visibly pulse in intensity (LCD polarity inversion); 16 MHz gives ~57 Hz.
-// If the image ever shifts or tears (PSRAM bandwidth), lower it via build_flags, e.g. -DLCD_PIXEL_CLOCK_MHZ=14.
-#ifndef LCD_PIXEL_CLOCK_MHZ
-#define LCD_PIXEL_CLOCK_MHZ 16
-#endif
-constexpr uint32_t PIXEL_CLOCK_HZ = LCD_PIXEL_CLOCK_MHZ * 1000 * 1000;
+constexpr const char *TAG = "display";
+
+// Refresh rate = pclk / (548 * 508) with the timings below: 16 MHz ~57 Hz, 18 MHz ~65 Hz.
+// The frame buffer lives in PSRAM; bounce buffers in internal RAM decouple the LCD from PSRAM
+// bandwidth spikes, which is what limited the Arduino build to 16 MHz (sideways drift above that).
+// Both are set in menuconfig ("Toothbrush timer").
+constexpr uint32_t PIXEL_CLOCK_HZ = CONFIG_TOOTHBRUSH_LCD_PCLK_MHZ * 1000 * 1000;
+constexpr uint32_t BOUNCE_BUFFER_PX = CONFIG_TOOTHBRUSH_LCD_BOUNCE_LINES * LCD_WIDTH;
 
 constexpr uint32_t BACKLIGHT_FREQ_HZ = 20000;
-constexpr uint8_t BACKLIGHT_RES_BITS = 10;
-constexpr uint8_t BACKLIGHT_CHANNEL = 1;
+constexpr ledc_timer_bit_t BACKLIGHT_RES = LEDC_TIMER_10_BIT;
+constexpr ledc_channel_t BACKLIGHT_CHANNEL = LEDC_CHANNEL_0;
+constexpr ledc_timer_t BACKLIGHT_TIMER = LEDC_TIMER_0;
 
 spi_device_handle_t s_spi = nullptr;
 esp_lcd_panel_handle_t s_panel = nullptr;
@@ -115,19 +120,19 @@ bool st7701_init()
     }
 
     exio_write(EXIO_LCD_RST, false);
-    delay(10);
+    delay_ms(10);
     exio_write(EXIO_LCD_RST, true);
-    delay(120);
+    delay_ms(120);
 
     exio_write(EXIO_LCD_CS, false);
-    delay(5);
+    delay_ms(5);
     for (const InitCmd &c : kInitCmds) {
         spi_write9(false, c.cmd);
         for (uint8_t i = 0; i < c.len; i++) {
             spi_write9(true, c.data[i]);
         }
         if (c.delay_ms) {
-            delay(c.delay_ms);
+            delay_ms(c.delay_ms);
         }
     }
     exio_write(EXIO_LCD_CS, true);
@@ -143,7 +148,7 @@ bool rgb_panel_init()
 {
     esp_lcd_rgb_panel_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.clk_src = LCD_CLK_SRC_PLL160M;
+    cfg.clk_src = LCD_CLK_SRC_DEFAULT;
     cfg.timings.pclk_hz = PIXEL_CLOCK_HZ;
     cfg.timings.h_res = LCD_WIDTH;
     cfg.timings.v_res = LCD_HEIGHT;
@@ -155,23 +160,32 @@ bool rgb_panel_init()
     cfg.timings.vsync_front_porch = 8;
     cfg.timings.flags.pclk_active_neg = 0;
     cfg.data_width = 16;
-    cfg.psram_trans_align = 64;
-    cfg.hsync_gpio_num = PIN_LCD_HSYNC;
-    cfg.vsync_gpio_num = PIN_LCD_VSYNC;
-    cfg.de_gpio_num = PIN_LCD_DE;
-    cfg.pclk_gpio_num = PIN_LCD_PCLK;
-    cfg.disp_gpio_num = -1;
+    cfg.bits_per_pixel = 16;
+    cfg.num_fbs = 1;
+    // Two bounce buffers of this size in internal RAM; the LCD DMA reads those while an ISR refills
+    // them from the PSRAM frame buffer. Must divide the frame size (480 * 480 pixels).
+    cfg.bounce_buffer_size_px = BOUNCE_BUFFER_PX;
+    cfg.dma_burst_size = 64;
+    cfg.hsync_gpio_num = (gpio_num_t)PIN_LCD_HSYNC;
+    cfg.vsync_gpio_num = (gpio_num_t)PIN_LCD_VSYNC;
+    cfg.de_gpio_num = (gpio_num_t)PIN_LCD_DE;
+    cfg.pclk_gpio_num = (gpio_num_t)PIN_LCD_PCLK;
+    cfg.disp_gpio_num = GPIO_NUM_NC;
     const int data_pins[16] = PIN_LCD_DATA;
     for (int i = 0; i < 16; i++) {
-        cfg.data_gpio_nums[i] = data_pins[i];
+        cfg.data_gpio_nums[i] = (gpio_num_t)data_pins[i];
     }
     cfg.flags.fb_in_psram = 1;
 
-    if (esp_lcd_new_rgb_panel(&cfg, &s_panel) != ESP_OK) {
+    const esp_err_t err = esp_lcd_new_rgb_panel(&cfg, &s_panel);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_lcd_new_rgb_panel: %s", esp_err_to_name(err));
         return false;
     }
     esp_lcd_panel_reset(s_panel);
     esp_lcd_panel_init(s_panel);
+    ESP_LOGI(TAG, "RGB panel %d MHz, bounce buffers %d lines", CONFIG_TOOTHBRUSH_LCD_PCLK_MHZ,
+             CONFIG_TOOTHBRUSH_LCD_BOUNCE_LINES);
     return true;
 }
 
@@ -180,11 +194,11 @@ bool rgb_panel_init()
 bool display_init()
 {
     if (!st7701_init()) {
-        Serial.println("[display] ST7701 SPI init failed");
+        ESP_LOGE(TAG, "ST7701 SPI init failed");
         return false;
     }
     if (!rgb_panel_init()) {
-        Serial.println("[display] RGB panel init failed");
+        ESP_LOGE(TAG, "RGB panel init failed");
         return false;
     }
     return true;
@@ -197,13 +211,23 @@ void display_flush(int x1, int y1, int x2, int y2, const void *pixels)
 
 void backlight_init()
 {
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(PIN_LCD_BACKLIGHT, BACKLIGHT_FREQ_HZ, BACKLIGHT_RES_BITS);
-#else
-    ledcSetup(BACKLIGHT_CHANNEL, BACKLIGHT_FREQ_HZ, BACKLIGHT_RES_BITS);
-    ledcAttachPin(PIN_LCD_BACKLIGHT, BACKLIGHT_CHANNEL);
-#endif
-    backlight_set(0);
+    ledc_timer_config_t timer;
+    memset(&timer, 0, sizeof(timer));
+    timer.speed_mode = LEDC_LOW_SPEED_MODE;
+    timer.duty_resolution = BACKLIGHT_RES;
+    timer.timer_num = BACKLIGHT_TIMER;
+    timer.freq_hz = BACKLIGHT_FREQ_HZ;
+    timer.clk_cfg = LEDC_AUTO_CLK;
+    ledc_timer_config(&timer);
+
+    ledc_channel_config_t channel;
+    memset(&channel, 0, sizeof(channel));
+    channel.gpio_num = PIN_LCD_BACKLIGHT;
+    channel.speed_mode = LEDC_LOW_SPEED_MODE;
+    channel.channel = BACKLIGHT_CHANNEL;
+    channel.timer_sel = BACKLIGHT_TIMER;
+    channel.duty = 0;
+    ledc_channel_config(&channel);
 }
 
 void backlight_set(uint8_t percent)
@@ -211,11 +235,7 @@ void backlight_set(uint8_t percent)
     if (percent > 100) {
         percent = 100;
     }
-    const uint32_t max_duty = (1u << BACKLIGHT_RES_BITS) - 1;
-    uint32_t duty = max_duty * percent / 100;
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcWrite(PIN_LCD_BACKLIGHT, duty);
-#else
-    ledcWrite(BACKLIGHT_CHANNEL, duty);
-#endif
+    const uint32_t max_duty = (1u << BACKLIGHT_RES) - 1;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, BACKLIGHT_CHANNEL, max_duty * percent / 100);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, BACKLIGHT_CHANNEL);
 }

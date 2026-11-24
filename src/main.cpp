@@ -1,16 +1,23 @@
 // Toothbrush timer for the Waveshare ESP32-S3-Touch-LCD-2.8C.
-#include <Arduino.h>
-#include <Preferences.h>
-#include <Wire.h>
-#include <esp_heap_caps.h>
-#include <esp_random.h>
-#include <lvgl.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/time.h>
 #include <time.h>
+
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lvgl.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 #include "board/buzzer.h"
 #include "board/display.h"
 #include "board/exio.h"
+#include "board/hal.h"
+#include "board/i2c_bus.h"
 #include "board/oralb_scanner.h"
 #include "board/pins.h"
 #include "board/rtc_pcf85063.h"
@@ -20,6 +27,8 @@
 #include "ui/ui.h"
 
 namespace {
+
+const char *const TAG = "toothbrush";
 
 // ---- Behaviour ---------------------------------------------------------------------------
 constexpr uint32_t DEFAULT_DURATION_S = 120; // brushing time until changed in settings (120/100/60/40 s)
@@ -38,20 +47,17 @@ constexpr uint32_t UI_UPDATE_MS = 50;
 constexpr uint16_t LONG_PRESS_MS = 400; // hold time for settings / cancelling a timer
 constexpr uint32_t RTC_RESYNC_MS = 10 * 60 * 1000;
 constexpr int DRAW_BUF_LINES = 40;
+constexpr uint32_t UI_TASK_STACK = 16 * 1024;
 
 // ---- State -------------------------------------------------------------------------------
 brush_core_t s_core;
 oralb_tracker_t s_oralb;
-Preferences s_prefs;
+nvs_handle_t s_nvs = 0;
 UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC, 100, true, DEFAULT_DURATION_S};
 
 uint32_t s_last_activity_ms = 0;
 uint8_t s_brightness = 0;
 uint32_t s_backlight_step_ms = 0;
-
-lv_disp_draw_buf_t s_draw_buf;
-lv_disp_drv_t s_disp_drv;
-lv_indev_drv_t s_indev_drv;
 
 // ---- Time --------------------------------------------------------------------------------
 void set_system_time(const struct tm &local)
@@ -97,7 +103,7 @@ void init_time()
     bool have_rtc = rtc_init();
     if (have_rtc && rtc_read(&t) && t.tm_year + 1900 >= 2024) {
         set_system_time(t);
-        Serial.printf("[time] RTC %02d:%02d:%02d\n", t.tm_hour, t.tm_min, t.tm_sec);
+        ESP_LOGI(TAG, "RTC %02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
         return;
     }
     build_time(&t);
@@ -105,7 +111,7 @@ void init_time()
     if (have_rtc) {
         rtc_write(&t);
     }
-    Serial.println("[time] RTC invalid, seeded from build time");
+    ESP_LOGW(TAG, "RTC invalid, seeded from build time");
 }
 
 void resync_from_rtc()
@@ -117,10 +123,12 @@ void resync_from_rtc()
 }
 
 // ---- LVGL glue ---------------------------------------------------------------------------
-void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *pixels)
+uint32_t lvgl_tick_cb() { return millis(); }
+
+void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
 {
     display_flush(area->x1, area->y1, area->x2, area->y2, pixels);
-    lv_disp_flush_ready(drv);
+    lv_display_flush_ready(disp);
 }
 
 bool screensaver_active(uint32_t now_ms);
@@ -129,7 +137,7 @@ bool screensaver_active(uint32_t now_ms);
 // until the finger lifts, so starting a timer needs a second tap.
 bool s_touch_down = false, s_swallow_touch = false;
 
-void lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *data)
+void lvgl_touch_cb(lv_indev_t *, lv_indev_data_t *data)
 {
     uint16_t x = 0, y = 0;
     if (touch_read(&x, &y)) {
@@ -143,69 +151,103 @@ void lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *data)
         s_touch_down = s_swallow_touch = false;
     }
     if (s_touch_down && !s_swallow_touch) {
-        data->point.x = (lv_coord_t)x;
-        data->point.y = (lv_coord_t)y;
+        data->point.x = x;
+        data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
 }
 
+// Draw buffers live in internal RAM: the RGB bounce buffers already compete for PSRAM bandwidth.
 void *alloc_draw_buffer(size_t bytes)
 {
-    void *p = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    return p ? p : heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    void *p = heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (!p) {
+        ESP_LOGW(TAG, "draw buffer in PSRAM");
+        p = heap_caps_aligned_alloc(64, bytes, MALLOC_CAP_SPIRAM);
+    }
+    return p;
 }
 
 void init_lvgl()
 {
     lv_init();
+    lv_tick_set_cb(lvgl_tick_cb);
 
-    const size_t px = LCD_WIDTH * DRAW_BUF_LINES;
-    void *buf1 = alloc_draw_buffer(px * sizeof(lv_color_t));
-    void *buf2 = alloc_draw_buffer(px * sizeof(lv_color_t));
-    lv_disp_draw_buf_init(&s_draw_buf, buf1, buf2, px);
+    lv_display_t *disp = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
+    const size_t bytes = LCD_WIDTH * DRAW_BUF_LINES * 2;
+    lv_display_set_buffers(disp, alloc_draw_buffer(bytes), alloc_draw_buffer(bytes), bytes,
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_flush_cb(disp, lvgl_flush_cb);
 
-    lv_disp_drv_init(&s_disp_drv);
-    s_disp_drv.hor_res = LCD_WIDTH;
-    s_disp_drv.ver_res = LCD_HEIGHT;
-    s_disp_drv.flush_cb = lvgl_flush_cb;
-    s_disp_drv.draw_buf = &s_draw_buf;
-    lv_disp_drv_register(&s_disp_drv);
-
-    lv_indev_drv_init(&s_indev_drv);
-    s_indev_drv.type = LV_INDEV_TYPE_POINTER;
-    s_indev_drv.read_cb = lvgl_touch_cb;
-    s_indev_drv.long_press_time = LONG_PRESS_MS;
-    lv_indev_drv_register(&s_indev_drv);
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, lvgl_touch_cb);
+    lv_indev_set_long_press_time(indev, LONG_PRESS_MS);
 }
 
-// ---- Behaviour helpers ----------------------------------------------------------------------
+// ---- Settings (NVS namespace "brush"; same keys and types the Arduino Preferences build used) ----
+uint8_t nvs_u8(const char *key, uint8_t fallback)
+{
+    uint8_t v = fallback;
+    return s_nvs && nvs_get_u8(s_nvs, key, &v) == ESP_OK ? v : fallback;
+}
+
+uint16_t nvs_u16(const char *key, uint16_t fallback)
+{
+    uint16_t v = fallback;
+    return s_nvs && nvs_get_u16(s_nvs, key, &v) == ESP_OK ? v : fallback;
+}
+
+void init_nvs()
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "erasing NVS (%s)", esp_err_to_name(err));
+        nvs_flash_erase();
+        err = nvs_flash_init();
+    }
+    if (err == ESP_OK) {
+        err = nvs_open("brush", NVS_READWRITE, &s_nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS unavailable (%s); settings will not persist", esp_err_to_name(err));
+        s_nvs = 0;
+    }
+}
+
 void load_settings()
 {
-    s_prefs.begin("brush", false);
-    s_settings.count_up = s_prefs.getBool("count_up", false);
-    s_settings.sound = s_prefs.getBool("sound", true);
-    uint8_t lang = s_prefs.getUChar("lang", DEFAULT_LANG);
+    s_settings.count_up = nvs_u8("count_up", 0) != 0;
+    s_settings.sound = nvs_u8("sound", 1) != 0;
+    const uint8_t lang = nvs_u8("lang", DEFAULT_LANG);
     s_settings.lang = lang < BRUSH_LANG_COUNT ? (brush_lang_t)lang : DEFAULT_LANG;
-    const uint8_t face = s_prefs.getUChar("clock_face", CLOCK_FACE_CLASSIC);
+    const uint8_t face = nvs_u8("clock_face", CLOCK_FACE_CLASSIC);
     s_settings.clock_face = face < CLOCK_FACE_COUNT ? static_cast<ClockFace>(face) : CLOCK_FACE_CLASSIC;
-    const uint8_t brightness = s_prefs.getUChar("brightness", 100);
+    const uint8_t brightness = nvs_u8("brightness", 100);
     s_settings.brightness = brightness >= 25 && brightness <= 100 ? brightness : 100;
-    s_settings.custom_font = s_prefs.getBool("custom_font", true);
-    const uint16_t duration = s_prefs.getUShort("duration", DEFAULT_DURATION_S);
+    s_settings.custom_font = nvs_u8("custom_font", 1) != 0;
+    const uint16_t duration = nvs_u16("duration", DEFAULT_DURATION_S);
     s_settings.duration_s = duration >= 20 && duration <= 600 ? duration : DEFAULT_DURATION_S;
 }
 
 void save_settings()
 {
-    s_prefs.putBool("count_up", s_settings.count_up);
-    s_prefs.putBool("sound", s_settings.sound);
-    s_prefs.putUChar("lang", (uint8_t)s_settings.lang);
-    s_prefs.putUChar("clock_face", s_settings.clock_face);
-    s_prefs.putUChar("brightness", s_settings.brightness);
-    s_prefs.putBool("custom_font", s_settings.custom_font);
-    s_prefs.putUShort("duration", s_settings.duration_s);
+    if (!s_nvs) {
+        return;
+    }
+    nvs_set_u8(s_nvs, "count_up", s_settings.count_up);
+    nvs_set_u8(s_nvs, "sound", s_settings.sound);
+    nvs_set_u8(s_nvs, "lang", (uint8_t)s_settings.lang);
+    nvs_set_u8(s_nvs, "clock_face", (uint8_t)s_settings.clock_face);
+    nvs_set_u8(s_nvs, "brightness", s_settings.brightness);
+    nvs_set_u8(s_nvs, "custom_font", s_settings.custom_font);
+    nvs_set_u16(s_nvs, "duration", (uint16_t)s_settings.duration_s);
+    if (nvs_commit(s_nvs) != ESP_OK) {
+        ESP_LOGW(TAG, "saving settings failed");
+    }
 }
 
 // Eases the backlight towards its target 1 % at a time (smooth wake/dim, fade-in on boot).
@@ -356,18 +398,22 @@ void app_settings_done(int hour, int minute, bool time_changed, const UiSettings
     buzzer_enable(s_settings.sound);
 }
 
-// ---- Arduino entry points -----------------------------------------------------------------------
+// ---- Entry point ------------------------------------------------------------------------------
+namespace {
+
 void setup()
 {
-    Serial.begin(115200);
-    Serial.println("\n[toothbrush] starting");
+    ESP_LOGI(TAG, "starting");
 
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_FREQ_HZ);
+    init_nvs();
+    if (!i2c_bus_init()) {
+        ESP_LOGE(TAG, "I2C init failed");
+    }
     exio_init();
     backlight_init();
 
     if (!display_init()) {
-        Serial.println("[toothbrush] display init failed");
+        ESP_LOGE(TAG, "display init failed");
     }
     touch_init();
     init_time();
@@ -422,5 +468,22 @@ void loop()
     }
 
     lv_timer_handler();
-    delay(animating || backlight_fading() ? 1 : 5);
+    delay_ms(animating || backlight_fading() ? 1 : 5);
+}
+
+// LVGL is not thread-safe: everything UI-related runs in this one task.
+void ui_task(void *)
+{
+    setup();
+    for (;;) {
+        loop();
+    }
+}
+
+} // namespace
+
+extern "C" void app_main(void)
+{
+    // Core 1 keeps the UI away from the Bluetooth controller/host on core 0.
+    xTaskCreatePinnedToCore(ui_task, "ui", UI_TASK_STACK, nullptr, 2, nullptr, 1);
 }

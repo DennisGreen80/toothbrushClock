@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "ui/lv_compat.h"
+
 namespace {
 
 constexpr lv_opa_t OFF_SEGMENT_OPA = 18; // faint "unlit" segments
@@ -53,14 +55,14 @@ lv_coord_t text_width(const Geometry &g, const char *text)
     return total;
 }
 
-void fill(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *dsc, lv_coord_t x1, lv_coord_t y1, lv_coord_t x2,
+void fill(lv_layer_t *layer, lv_draw_rect_dsc_t *dsc, lv_coord_t x1, lv_coord_t y1, lv_coord_t x2,
           lv_coord_t y2)
 {
     lv_area_t a = {x1, y1, (lv_coord_t)(x2 - 1), (lv_coord_t)(y2 - 1)};
-    lv_draw_rect(ctx, dsc, &a);
+    lv_draw_rect(layer, dsc, &a);
 }
 
-void draw_digit(lv_draw_ctx_t *ctx, const Geometry &g, lv_coord_t x, lv_coord_t y, uint8_t on,
+void draw_digit(lv_layer_t *layer, const Geometry &g, lv_coord_t x, lv_coord_t y, uint8_t on,
                 lv_color_t color, lv_opa_t opa)
 {
     const lv_coord_t h = g.h, w = g.w, t = g.t, gap = g.gap;
@@ -84,11 +86,11 @@ void draw_digit(lv_draw_ctx_t *ctx, const Geometry &g, lv_coord_t x, lv_coord_t 
     dsc.bg_color = color;
     for (int i = 0; i < 7; i++) {
         dsc.bg_opa = (lv_opa_t)(((on & (1 << i)) ? LV_OPA_COVER : OFF_SEGMENT_OPA) * opa / 255);
-        fill(ctx, &dsc, segs[i].x1, segs[i].y1, segs[i].x2, segs[i].y2);
+        fill(layer, &dsc, segs[i].x1, segs[i].y1, segs[i].x2, segs[i].y2);
     }
 }
 
-void draw_colon(lv_draw_ctx_t *ctx, const Geometry &g, lv_coord_t x, lv_coord_t y, lv_color_t color,
+void draw_colon(lv_layer_t *layer, const Geometry &g, lv_coord_t x, lv_coord_t y, lv_color_t color,
                 lv_opa_t opa)
 {
     lv_draw_rect_dsc_t dsc;
@@ -98,26 +100,27 @@ void draw_colon(lv_draw_ctx_t *ctx, const Geometry &g, lv_coord_t x, lv_coord_t 
     dsc.bg_opa = opa;
     const lv_coord_t centers[2] = {(lv_coord_t)(y + g.h * 32 / 100), (lv_coord_t)(y + g.h * 68 / 100)};
     for (lv_coord_t cy : centers) {
-        fill(ctx, &dsc, x, (lv_coord_t)(cy - g.t / 2), (lv_coord_t)(x + g.t), (lv_coord_t)(cy - g.t / 2 + g.t));
+        fill(layer, &dsc, x, (lv_coord_t)(cy - g.t / 2), (lv_coord_t)(x + g.t), (lv_coord_t)(cy - g.t / 2 + g.t));
     }
 }
 
 void draw_event_cb(lv_event_t *e)
 {
-    lv_obj_t *obj = lv_event_get_target(e);
+    lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
     SegData *d = (SegData *)lv_obj_get_user_data(obj);
     if (!d || d->opa <= LV_OPA_MIN) {
         return;
     }
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    const lv_area_t coords = obj_coords(obj);
     const Geometry g = geometry(d->h);
-    lv_coord_t x = obj->coords.x1;
-    const lv_coord_t y = obj->coords.y1;
+    lv_coord_t x = coords.x1;
+    const lv_coord_t y = coords.y1;
     for (const char *p = d->text; *p; p++) {
         if (*p == ':') {
-            draw_colon(ctx, g, x, y, d->color, d->opa);
+            draw_colon(layer, g, x, y, d->color, d->opa);
         } else {
-            draw_digit(ctx, g, x, y, segments_for(*p), d->color, d->opa);
+            draw_digit(layer, g, x, y, segments_for(*p), d->color, d->opa);
         }
         x += char_width(g, *p) + g.spacing;
     }
@@ -125,8 +128,8 @@ void draw_event_cb(lv_event_t *e)
 
 void delete_event_cb(lv_event_t *e)
 {
-    lv_obj_t *obj = lv_event_get_target(e);
-    lv_mem_free(lv_obj_get_user_data(obj));
+    lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
+    lv_free(lv_obj_get_user_data(obj));
     lv_obj_set_user_data(obj, nullptr);
 }
 
@@ -143,9 +146,9 @@ lv_obj_t *seg_create(lv_obj_t *parent, lv_coord_t digit_height)
 {
     lv_obj_t *obj = lv_obj_create(parent);
     lv_obj_remove_style_all(obj);
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    SegData *d = (SegData *)lv_mem_alloc(sizeof(SegData));
+    SegData *d = (SegData *)lv_malloc(sizeof(SegData));
     memset(d, 0, sizeof(*d));
     d->h = digit_height;
     d->color = lv_color_white();
@@ -173,7 +176,7 @@ void seg_set_text(lv_obj_t *seg, const char *text)
 void seg_set_color(lv_obj_t *seg, lv_color_t color)
 {
     SegData *d = (SegData *)lv_obj_get_user_data(seg);
-    if (lv_color_to16(d->color) == lv_color_to16(color)) {
+    if (lv_color_eq(d->color, color)) {
         return;
     }
     d->color = color;

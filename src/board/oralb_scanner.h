@@ -1,5 +1,5 @@
-// Passive BLE scanner for Oral-B toothbrush advertisements (NimBLE).
-// Advertisements are parsed on the BLE host task and queued; drain them from loop().
+// Passive BLE scanner for Oral-B toothbrush advertisements (ESP-IDF NimBLE host).
+// Advertisements are parsed on the BLE host task and queued; drain them from the UI loop.
 #pragma once
 
 #include <stdint.h>

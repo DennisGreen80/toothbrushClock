@@ -2,7 +2,7 @@
 // Geometry is mirrored in preview/sim.js.
 #pragma once
 
-#include <lvgl.h>
+#include "ui/lv_compat.h"
 
 // Height is width * 40 / 100.
 lv_obj_t *brush_icon_create(lv_obj_t *parent);

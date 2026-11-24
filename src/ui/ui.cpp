@@ -9,6 +9,8 @@
 #include "brush_scene.h"
 #include "ui/brush_icon.h"
 #include "ui/seg_digits.h"
+#include "ui/fonts/tb_fonts.h"
+#include "ui/lv_compat.h"
 
 namespace {
 
@@ -263,7 +265,7 @@ void set_visible(lv_obj_t *obj, bool visible)
 {
     if (visible == lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
         if (visible) {
-            lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
         }
@@ -274,7 +276,7 @@ void set_visible(lv_obj_t *obj, bool visible)
 // called on every UI update, and the seconds ring covers the whole screen, so only set real changes.
 void set_text_color(lv_obj_t *obj, lv_color_t color)
 {
-    if (lv_color_to16(lv_obj_get_style_text_color(obj, LV_PART_MAIN)) != lv_color_to16(color)) {
+    if (!lv_color_eq(lv_obj_get_style_text_color(obj, LV_PART_MAIN), color)) {
         lv_obj_set_style_text_color(obj, color, 0);
     }
 }
@@ -286,14 +288,121 @@ void set_text_opa(lv_obj_t *obj, lv_opa_t opa)
     }
 }
 
-void set_arc_style(lv_obj_t *obj, lv_part_t part, lv_color_t color, lv_opa_t opa)
+// ---- LVGL 9 draw helpers (keep the call shapes the face drawings were written with) ----------
+
+lv_value_precise_t to_precise(float v)
 {
-    if (lv_color_to16(lv_obj_get_style_arc_color(obj, part)) != lv_color_to16(color)) {
-        lv_obj_set_style_arc_color(obj, color, part);
+#if LV_USE_FLOAT
+    return v;
+#else
+    return (lv_value_precise_t)lroundf(v);
+#endif
+}
+
+void draw_line(lv_layer_t *layer, lv_draw_line_dsc_t *dsc, const lv_point_t *a, const lv_point_t *b)
+{
+    dsc->p1.x = a->x;
+    dsc->p1.y = a->y;
+    dsc->p2.x = b->x;
+    dsc->p2.y = b->y;
+    lv_draw_line(layer, dsc);
+}
+
+// Angles in degrees, clockwise from 3 o'clock; any range (e.g. 270..630) is normalized.
+void draw_arc(lv_layer_t *layer, lv_draw_arc_dsc_t *dsc, const lv_point_t *center, uint16_t radius,
+              int32_t start, int32_t end)
+{
+    if (end <= start) {
+        return;
     }
-    if (lv_obj_get_style_arc_opa(obj, part) != opa) {
-        lv_obj_set_style_arc_opa(obj, opa, part);
+    dsc->center = *center;
+    dsc->radius = radius;
+    if (end - start >= 360) {
+        dsc->start_angle = 0;
+        dsc->end_angle = 360;
+    } else {
+        dsc->start_angle = (lv_value_precise_t)(((start % 360) + 360) % 360);
+        dsc->end_angle = (lv_value_precise_t)(((end % 360) + 360) % 360);
     }
+    lv_draw_arc(layer, dsc);
+}
+
+// Convex polygon as a fan of triangles. Each triangle is grown by half a pixel so the anti-aliased
+// shared edges overlap instead of leaving faint seams.
+void draw_polygon(lv_layer_t *layer, const lv_draw_rect_dsc_t *fill, const lv_point_t *pts, uint16_t n)
+{
+    lv_draw_triangle_dsc_t tri;
+    lv_draw_triangle_dsc_init(&tri);
+    tri.color = fill->bg_color;
+    tri.opa = fill->bg_opa;
+    for (uint16_t i = 1; i + 1 < n; i++) {
+        const lv_point_t *v[3] = {&pts[0], &pts[i], &pts[i + 1]};
+        const float cx = (v[0]->x + v[1]->x + v[2]->x) / 3.0f, cy = (v[0]->y + v[1]->y + v[2]->y) / 3.0f;
+        for (int k = 0; k < 3; k++) {
+            const float dx = v[k]->x - cx, dy = v[k]->y - cy, len = sqrtf(dx * dx + dy * dy);
+            const float grow = len > 0.0f ? (len + 0.5f) / len : 1.0f;
+            tri.p[k].x = to_precise(cx + dx * grow);
+            tri.p[k].y = to_precise(cy + dy * grow);
+        }
+        lv_draw_triangle(layer, &tri);
+    }
+}
+
+// ---- Seconds ring --------------------------------------------------------------------------
+// Drawn by draw_seconds_ring() instead of an lv_arc widget: LVGL 9 has no per-part draw hook for
+// the synthwave / candy stripes, and drawing it ourselves lets us invalidate exactly the slice that
+// changes (the ring covers the whole screen).
+constexpr lv_coord_t RING_RADIUS = 234, RING_WIDTH = 4;
+
+struct SecondsRing {
+    int start = 0, end = 0; // degrees clockwise from 12 o'clock
+    lv_color_t track_color, color;
+    lv_opa_t opa = LV_OPA_TRANSP; // track and indicator
+} s_ring;
+
+void ring_invalidate(int from, int to) // degrees from 12 o'clock, from <= to
+{
+    if (to - from >= 180) {
+        lv_obj_invalidate(s_seconds_arc);
+        return;
+    }
+    const lv_area_t box = obj_coords(s_seconds_arc);
+    const int32_t cx = box.x1 + RING_RADIUS, cy = box.y1 + RING_RADIUS;
+    int a = (270 + from) % 360, b = (270 + to) % 360;
+    lv_area_t area;
+    if (b < a) { // the span crosses 3 o'clock (0 deg): invalidate both parts
+        lv_draw_arc_get_area(cx, cy, RING_RADIUS, a, 360, RING_WIDTH, true, &area);
+        lv_obj_invalidate_area(s_seconds_arc, &area);
+        a = 0;
+    }
+    lv_draw_arc_get_area(cx, cy, RING_RADIUS, a, b == a ? a + 1 : b, RING_WIDTH, true, &area);
+    lv_obj_invalidate_area(s_seconds_arc, &area);
+}
+
+void ring_set_angles(int start, int end)
+{
+    if (start == s_ring.start && end == s_ring.end) {
+        return;
+    }
+    if (end != s_ring.end) {
+        ring_invalidate(LV_MIN(end, s_ring.end), LV_MAX(end, s_ring.end));
+    }
+    if (start != s_ring.start) {
+        ring_invalidate(LV_MIN(start, s_ring.start), LV_MAX(start, s_ring.start));
+    }
+    s_ring.start = start;
+    s_ring.end = end;
+}
+
+void ring_set_style(lv_color_t track_color, lv_color_t color, lv_opa_t opa)
+{
+    if (lv_color_eq(track_color, s_ring.track_color) && lv_color_eq(color, s_ring.color) && opa == s_ring.opa) {
+        return;
+    }
+    s_ring.track_color = track_color;
+    s_ring.color = color;
+    s_ring.opa = opa;
+    lv_obj_invalidate(s_seconds_arc);
 }
 
 int index_of_color(int color) { return brush_index_of_color(s_core, (uint8_t)color); }
@@ -305,7 +414,7 @@ lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, co
     lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(l, text);
-    lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
     return l;
 }
 
@@ -313,7 +422,7 @@ lv_obj_t *make_arc(lv_obj_t *parent)
 {
     lv_obj_t *arc = lv_arc_create(parent);
     lv_obj_remove_style_all(arc);
-    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(arc);
     lv_arc_set_rotation(arc, 0);
     lv_arc_set_range(arc, 0, 1000);
@@ -334,7 +443,7 @@ bool s_press_moved = false, s_press_long = false;
 
 void idle_event_cb(lv_event_t *e)
 {
-    lv_indev_t *indev = lv_indev_get_act();
+    lv_indev_t *indev = lv_indev_active();
     if (!indev) {
         return;
     }
@@ -400,47 +509,47 @@ lv_color_t synth_palette_color(const uint32_t (&colors)[4], float progress)
                         to_opa(phase - index));
 }
 
-void draw_synth_ring(lv_event_t *e)
+// Track plus progress arc. Synthwave and Candy Cane draw the progress in fixed-palette steps.
+void draw_seconds_ring(lv_event_t *e)
 {
-    if (s_synth_opa <= LV_OPA_MIN && s_candy_opa <= LV_OPA_MIN) {
+    if (s_ring.opa <= LV_OPA_MIN) {
         return;
     }
-    lv_obj_draw_part_dsc_t *part = lv_event_get_draw_part_dsc(e);
-    if (part->type != LV_ARC_DRAW_PART_FOREGROUND || part->part != LV_PART_INDICATOR) {
+    lv_layer_t *layer = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_seconds_arc);
+    const lv_point_t center = {box.x1 + RING_RADIUS, box.y1 + RING_RADIUS};
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.width = RING_WIDTH;
+    arc.opa = s_ring.opa;
+    arc.color = s_ring.track_color;
+    draw_arc(layer, &arc, &center, RING_RADIUS, 0, 360);
+
+    const int first = s_ring.start, sweep = s_ring.end;
+    if (sweep <= first) {
         return;
     }
-    lv_draw_arc_dsc_t arc = *part->arc_dsc;
-    part->arc_dsc->opa = LV_OPA_TRANSP;
-    if (arc.opa <= LV_OPA_MIN) {
-        return;
-    }
-    const int first = lv_arc_get_angle_start(s_seconds_arc);
-    const int sweep = lv_arc_get_angle_end(s_seconds_arc);
     const bool candy = s_candy_opa > LV_OPA_MIN;
+    if (s_synth_opa <= LV_OPA_MIN && !candy) {
+        arc.color = s_ring.color;
+        arc.rounded = 1;
+        draw_arc(layer, &arc, &center, RING_RADIUS, 270 + first, 270 + sweep);
+        return;
+    }
     const int step = candy ? 6 : 5;
-    arc.rounded = false;
-    const lv_area_t &clip = *part->draw_ctx->clip_area;
     for (int start = first - first % step; start < sweep; start += step) {
-        const int from = LV_MAX(start, first);
-        const int end = LV_MIN(start + step, sweep);
-        lv_area_t bounds;
-        lv_draw_arc_get_area(part->p1->x, part->p1->y, part->radius, 270 + from, 270 + end,
-                             arc.width, true, &bounds);
-        if (bounds.x2 < clip.x1 || bounds.x1 > clip.x2 || bounds.y2 < clip.y1 || bounds.y1 > clip.y2) {
-            continue;
-        }
         // Sample the fixed palette, not the length of the visible sweep.
         arc.color = candy ? lv_color_hex((start / step) % 2 ? CANDY_WHITE : CANDY_RED)
                           : synth_palette_color(kSynthRingColors, (start + step * 0.5f) / 360.0f);
-        lv_draw_arc(part->draw_ctx, &arc, part->p1, part->radius, 270 + from, 270 + end);
+        draw_arc(layer, &arc, &center, RING_RADIUS, 270 + LV_MAX(start, first), 270 + LV_MIN(start + step, sweep));
     }
 }
 
 // Mirrors synthBackdrop() in preview/sim.js.
 void draw_synth_backdrop(lv_event_t *e)
 {
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    const lv_area_t &box = s_synth_backdrop->coords;
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_synth_backdrop);
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
     rect.bg_opa = s_synth_opa;
@@ -459,7 +568,7 @@ void draw_synth_backdrop(lv_event_t *e)
         dsc.width = width;
         const lv_point_t a = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
         const lv_point_t b = {(lv_coord_t)(box.x1 + end_x), (lv_coord_t)(box.y1 + end_y)};
-        lv_draw_line(ctx, &dsc, &a, &b);
+        draw_line(ctx, &dsc, &a, &b);
     };
 
     constexpr int stars[][3] = {{137, 65, 2}, {172, 115, 3}, {307, 56, 2}, {343, 92, 3},
@@ -500,9 +609,8 @@ void draw_synth_backdrop(lv_event_t *e)
 // Mirrors flowerBackdrop() in preview/sim.js. Each elapsed second lights one mark.
 void draw_flower_backdrop(lv_event_t *e)
 {
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    const lv_area_t &box = s_flower_backdrop->coords;
-    const lv_area_t &clip = *ctx->clip_area;
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_flower_backdrop);
     const lv_point_t center = {(lv_coord_t)(box.x1 + 240), (lv_coord_t)(box.y1 + 240)};
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
@@ -511,9 +619,6 @@ void draw_flower_backdrop(lv_event_t *e)
     const auto circle = [&](int x, int y, int r, uint32_t color) {
         x += box.x1;
         y += box.y1;
-        if (x + r < clip.x1 || x - r > clip.x2 || y + r < clip.y1 || y - r > clip.y2) {
-            return;
-        }
         rect.bg_color = lv_color_hex(color);
         const lv_area_t area = {(lv_coord_t)(x - r), (lv_coord_t)(y - r),
                                 (lv_coord_t)(x + r), (lv_coord_t)(y + r)};
@@ -533,18 +638,18 @@ void draw_flower_backdrop(lv_event_t *e)
     circle(240, 240, 211, FLOWER_GOLD);
     circle(240, 240, 207, FLOWER_PAPER);
 
-    if (clip.y2 >= box.y1 + 358) {
+    {
         lv_draw_arc_dsc_t ribbon;
         lv_draw_arc_dsc_init(&ribbon);
         ribbon.opa = s_flower_opa;
         ribbon.width = 11;
         ribbon.rounded = true;
         ribbon.color = lv_color_hex(FLOWER_PINK);
-        lv_draw_arc(ctx, &ribbon, &center, 197, 50, 130);
+        draw_arc(ctx, &ribbon, &center, 197, 50, 130);
         ribbon.color = lv_color_hex(FLOWER_CORAL);
-        lv_draw_arc(ctx, &ribbon, &center, 183, 50, 130);
+        draw_arc(ctx, &ribbon, &center, 183, 50, 130);
         ribbon.color = lv_color_hex(FLOWER_GOLD);
-        lv_draw_arc(ctx, &ribbon, &center, 169, 50, 130);
+        draw_arc(ctx, &ribbon, &center, 169, 50, 130);
     }
 
     daisy(236, 99, 24, 18, FLOWER_CORAL, FLOWER_INK);
@@ -596,7 +701,7 @@ void update_flower_face(lv_opa_t opa, lv_opa_t ring_opa, int second)
     if (full || (ring_opa > LV_OPA_MIN && (second < previous || second - previous > 5))) {
         lv_obj_invalidate(s_flower_backdrop);
     } else if (ring_opa > LV_OPA_MIN && second != previous) {
-        const lv_area_t &box = s_flower_backdrop->coords;
+        const lv_area_t box = obj_coords(s_flower_backdrop);
         for (int i = previous; i <= second; ++i) {
             const int x = box.x1 + s_flower_marks[i].x, y = box.y1 + s_flower_marks[i].y;
             const lv_area_t area = {(lv_coord_t)(x - 9), (lv_coord_t)(y - 9),
@@ -608,8 +713,8 @@ void update_flower_face(lv_opa_t opa, lv_opa_t ring_opa, int second)
 
 void draw_christmas_backdrop(lv_event_t *e)
 {
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    const lv_area_t &box = s_christmas_backdrop->coords;
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_christmas_backdrop);
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
     rect.bg_opa = s_christmas_opa;
@@ -628,7 +733,7 @@ void draw_christmas_backdrop(lv_event_t *e)
         stroke.color = lv_color_hex(color);
         const lv_point_t a = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
         const lv_point_t b = {(lv_coord_t)(box.x1 + end_x), (lv_coord_t)(box.y1 + end_y)};
-        lv_draw_line(ctx, &stroke, &a, &b);
+        draw_line(ctx, &stroke, &a, &b);
     };
 
     circle(240, 240, 221, 0x36554A);
@@ -683,9 +788,9 @@ void draw_christmas_backdrop(lv_event_t *e)
     ground.width = 2;
     ground.rounded = true;
     ground.color = lv_color_hex(0x648C7A);
-    lv_draw_arc(ctx, &ground, &center, 197, 63, 117);
+    draw_arc(ctx, &ground, &center, 197, 63, 117);
     ground.color = lv_color_hex(0x36554A);
-    lv_draw_arc(ctx, &ground, &center, 204, 71, 109);
+    draw_arc(ctx, &ground, &center, 204, 71, 109);
 }
 
 lv_point_t pt(float x, float y) { return {(lv_coord_t)lroundf(x), (lv_coord_t)lroundf(y)}; }
@@ -841,8 +946,8 @@ void draw_candy_face(const Circle &circle, const Line &line, const Poly &poly, c
 
 void draw_extra_backdrop(lv_event_t *e)
 {
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    const lv_area_t &box = s_extra_backdrop->coords;
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_extra_backdrop);
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
     rect.bg_opa = s_extra_opa;
@@ -861,7 +966,7 @@ void draw_extra_backdrop(lv_event_t *e)
         stroke.color = lv_color_hex(color);
         const lv_point_t a = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
         const lv_point_t b = {(lv_coord_t)(box.x1 + end_x), (lv_coord_t)(box.y1 + end_y)};
-        lv_draw_line(ctx, &stroke, &a, &b);
+        draw_line(ctx, &stroke, &a, &b);
     };
     lv_draw_rect_dsc_t fill;
     lv_draw_rect_dsc_init(&fill);
@@ -874,7 +979,7 @@ void draw_extra_backdrop(lv_event_t *e)
             abs_points[n++] = {(lv_coord_t)(box.x1 + p.x), (lv_coord_t)(box.y1 + p.y)};
         }
         fill.bg_color = lv_color_hex(color);
-        lv_draw_polygon(ctx, &fill, abs_points, n);
+        draw_polygon(ctx, &fill, abs_points, n);
     };
     lv_draw_arc_dsc_t arc_dsc;
     lv_draw_arc_dsc_init(&arc_dsc);
@@ -885,7 +990,7 @@ void draw_extra_backdrop(lv_event_t *e)
         arc_dsc.width = (lv_coord_t)width;
         arc_dsc.rounded = rounded;
         const lv_point_t c = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
-        lv_draw_arc(ctx, &arc_dsc, &c, (uint16_t)r, (uint16_t)start, (uint16_t)end);
+        draw_arc(ctx, &arc_dsc, &c, (uint16_t)r, (uint16_t)start, (uint16_t)end);
     };
     const auto snowflake = [&](int x, int y, int r, uint32_t color) {
         const int d = r * 7 / 8, h = r / 2;
@@ -961,8 +1066,8 @@ bool is_birthday(const struct tm &date)
 void draw_birthday_flag(lv_event_t *e)
 {
     const auto &flag = *static_cast<const BirthdayFlag *>(lv_event_get_user_data(e));
-    const lv_area_t &box = flag.obj->coords;
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    const lv_area_t box = obj_coords(flag.obj);
+    lv_layer_t *ctx = lv_event_get_layer(e);
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
     rect.bg_opa = flag.opa;
@@ -999,7 +1104,7 @@ void build_birthday_flags()
     for (auto &flag : s_flags) {
         flag.obj = lv_obj_create(s_view);
         lv_obj_remove_style_all(flag.obj);
-        lv_obj_clear_flag(flag.obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(flag.obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_size(flag.obj, FLAG_BOX_WIDTH, 80);
         lv_obj_set_pos(flag.obj, flag.x, 70);
         set_visible(flag.obj, false);
@@ -1033,8 +1138,8 @@ void draw_timer_bg(lv_event_t *e)
     if (p.bg == 0 || s_timer_bg_opa <= LV_OPA_MIN) {
         return;
     }
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    const lv_area_t &box = s_timer_bg->coords;
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_timer_bg);
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
     rect.radius = LV_RADIUS_CIRCLE;
@@ -1057,18 +1162,18 @@ void draw_timer_bg(lv_event_t *e)
         arc.width = 6; // red/white candy-cane stripes around the dial
         for (int a = 0; a < 360; a += 8) {
             arc.color = lv_color_hex((a / 8) % 2 ? CANDY_WHITE : CANDY_RED);
-            lv_draw_arc(ctx, &arc, &center, 221, (uint16_t)a, (uint16_t)(a + 8));
+            draw_arc(ctx, &arc, &center, 221, (uint16_t)a, (uint16_t)(a + 8));
         }
     } else if (p.rim_style == RIM_STITCH) {
         arc.width = 2; // running stitch, as on the idle face
         arc.color = lv_color_hex(0xF1E6CC);
         for (int a = 0; a < 360; a += 6) {
-            lv_draw_arc(ctx, &arc, &center, 212, (uint16_t)a, (uint16_t)(a + 3));
+            draw_arc(ctx, &arc, &center, 212, (uint16_t)a, (uint16_t)(a + 3));
         }
     } else if (p.rim_style == RIM_FLOWER) {
         arc.width = 4; // gold ring inside the ink rim, as on the idle face
         arc.color = lv_color_hex(FLOWER_GOLD);
-        lv_draw_arc(ctx, &arc, &center, 217, 0, 360);
+        draw_arc(ctx, &arc, &center, 217, 0, 360);
     }
 }
 
@@ -1076,21 +1181,21 @@ void build_idle()
 {
     s_timer_bg = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_timer_bg);
-    lv_obj_clear_flag(s_timer_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_timer_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_timer_bg, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_timer_bg, false);
     lv_obj_add_event_cb(s_timer_bg, draw_timer_bg, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_synth_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_synth_backdrop);
-    lv_obj_clear_flag(s_synth_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_synth_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_synth_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_synth_backdrop, false);
     lv_obj_add_event_cb(s_synth_backdrop, draw_synth_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_flower_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_flower_backdrop);
-    lv_obj_clear_flag(s_flower_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_flower_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_flower_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_flower_backdrop, false);
     lv_obj_add_event_cb(s_flower_backdrop, draw_flower_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
@@ -1102,32 +1207,26 @@ void build_idle()
 
     s_christmas_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_christmas_backdrop);
-    lv_obj_clear_flag(s_christmas_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_christmas_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_christmas_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_christmas_backdrop, false);
     lv_obj_add_event_cb(s_christmas_backdrop, draw_christmas_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_extra_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_extra_backdrop);
-    lv_obj_clear_flag(s_extra_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_extra_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_extra_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_extra_backdrop, false);
     lv_obj_add_event_cb(s_extra_backdrop, draw_extra_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
-    s_seconds_arc = lv_arc_create(s_view);
+    s_seconds_arc = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_seconds_arc);
-    lv_obj_clear_flag(s_seconds_arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(s_seconds_arc, LCD_WIDTH - 12, LCD_HEIGHT - 12);
+    lv_obj_remove_flag(s_seconds_arc, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_seconds_arc, RING_RADIUS * 2, RING_RADIUS * 2);
     lv_obj_center(s_seconds_arc);
-    lv_arc_set_rotation(s_seconds_arc, 270);
-    lv_arc_set_bg_angles(s_seconds_arc, 0, 360);
-    lv_arc_set_range(s_seconds_arc, 0, 600);
-    lv_obj_set_style_arc_width(s_seconds_arc, 4, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_seconds_arc, 4, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(s_seconds_arc, lv_color_hex(0x1A1A1C), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_seconds_arc, lv_color_hex(kTimerColors[0]), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(s_seconds_arc, true, LV_PART_INDICATOR);
-    lv_obj_add_event_cb(s_seconds_arc, draw_synth_ring, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+    s_ring.track_color = lv_color_hex(0x1A1A1C);
+    s_ring.color = lv_color_hex(kTimerColors[0]);
+    lv_obj_add_event_cb(s_seconds_arc, draw_seconds_ring, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_date = make_label(s_view, &tb_font_28, COLOR_MUTED, "");
     s_hint = make_label(s_view, &tb_font_20, COLOR_FAINT, s_txt->hint);
@@ -1135,7 +1234,7 @@ void build_idle()
 
     s_gear = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_gear);
-    lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_gear, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(s_gear, GEAR_SIZE, GEAR_SIZE);
     lv_obj_set_pos(s_gear, GEAR_CX - GEAR_SIZE / 2, GEAR_CY - GEAR_SIZE / 2);
     lv_obj_set_style_radius(s_gear, LV_RADIUS_CIRCLE, 0);
@@ -1249,14 +1348,14 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second, b
     const lv_color_t grid = synth > LV_OPA_MIN
         ? synth_palette_color(kSynthGridColors, (float)(now_ms % SYNTH_GRID_CYCLE_MS) / SYNTH_GRID_CYCLE_MS)
         : s_synth_grid;
-    const bool grid_changed = lv_color_to16(grid) != lv_color_to16(s_synth_grid);
+    const bool grid_changed = !lv_color_eq(grid, s_synth_grid);
     s_synth_grid = grid;
     if (synth != s_synth_opa) {
         s_synth_opa = synth;
         set_visible(s_synth_backdrop, synth > LV_OPA_MIN);
         lv_obj_invalidate(s_synth_backdrop);
     } else if (grid_changed) {
-        lv_area_t grid_area = s_synth_backdrop->coords;
+        lv_area_t grid_area = obj_coords(s_synth_backdrop);
         grid_area.y1 += SYNTH_HORIZON - 2;
         lv_obj_invalidate_area(s_synth_backdrop, &grid_area);
     }
@@ -1335,9 +1434,8 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second, b
     set_text_color(s_hint, hint_color);
     set_text_opa(s_gear_icon, hint_opa);
     set_text_color(s_gear_icon, hint_color);
-    set_arc_style(s_seconds_arc, LV_PART_MAIN, themed(&FacePalette::track), ring_alpha);
-    set_arc_style(s_seconds_arc, LV_PART_INDICATOR,
-                  lv_color_mix(themed(&FacePalette::ring), accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)), ring_alpha);
+    ring_set_style(themed(&FacePalette::track),
+                   lv_color_mix(themed(&FacePalette::ring), accent, (lv_opa_t)(LV_OPA_COVER - saver_opa)), ring_alpha);
     const bool visible = opa > LV_OPA_MIN;
     set_visible(s_date, visible);
     set_visible(s_hint, visible && hint_opa > LV_OPA_MIN);
@@ -1345,7 +1443,7 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second, b
     if (hint_opa > LV_OPA_70 && s_core->count == 0) {
         lv_obj_add_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
     } else {
-        lv_obj_clear_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
     }
     set_visible(s_seconds_arc, !flower && visible && ring_alpha > LV_OPA_MIN);
 }
@@ -1371,7 +1469,7 @@ float loop_wave(uint32_t t, uint32_t start)
 
 // Draws in the preview's face units (ring outer radius SMILEY_UNIT) around the card center.
 struct SmileyPen {
-    lv_draw_ctx_t *ctx;
+    lv_layer_t *ctx;
     lv_point_t center;
     float k; // pixels per unit
 
@@ -1385,7 +1483,7 @@ struct SmileyPen {
         lv_draw_rect_dsc_init(&dsc);
         dsc.bg_color = color;
         dsc.bg_opa = opa;
-        lv_draw_polygon(ctx, &dsc, points, count);
+        draw_polygon(ctx, &dsc, points, count);
     }
     void dot(float x, float y, float r, lv_color_t color, lv_opa_t opa) const
     {
@@ -1410,7 +1508,7 @@ struct SmileyPen {
         dsc.round_start = 1;
         dsc.round_end = 1;
         const lv_point_t a = at(x1, y1), b = at(x2, y2);
-        lv_draw_line(ctx, &dsc, &a, &b);
+        draw_line(ctx, &dsc, &a, &b);
     }
     // `r` is the radius of the stroke's center line; angles in degrees, clockwise from 3 o'clock.
     void arc(float x, float y, float r, float width, float start, float end, lv_color_t color,
@@ -1426,7 +1524,7 @@ struct SmileyPen {
         dsc.width = (lv_coord_t)LV_MAX(1, lroundf(width * k));
         dsc.rounded = 1;
         const lv_point_t c = at(x, y);
-        lv_draw_arc(ctx, &dsc, &c, (uint16_t)lroundf(r * k + dsc.width / 2.0f), (uint16_t)lroundf(start),
+        draw_arc(ctx, &dsc, &c, (uint16_t)lroundf(r * k + dsc.width / 2.0f), (uint16_t)lroundf(start),
                     (uint16_t)lroundf(end));
     }
 };
@@ -1471,8 +1569,8 @@ void draw_smiley(lv_event_t *e)
     if (!c.smiley || c.opa <= LV_OPA_MIN) {
         return;
     }
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
-    const lv_area_t &box = c.face->coords;
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(c.face);
     const uint32_t t = c.smiley_now - c.smiley_ms;
     const float bounce = t >= SMILEY_BOUNCE_MS && t < SMILEY_INTRO_MS
         ? 1.0f + 0.06f * sinf(3.14159265f * (t - SMILEY_BOUNCE_MS) / SMILEY_BOUNCE_DUR_MS)
@@ -1492,7 +1590,7 @@ void draw_smiley(lv_event_t *e)
     const uint16_t outer = (uint16_t)lroundf(lerpf(c.r, 125.0f * c.r / SMILEY_UNIT + head_w / 2.0f, m) * bounce);
     if (m >= 1.0f) {
         ring.opa = c.opa;
-        lv_draw_arc(ctx, &ring, &pen.center, outer, 0, 360);
+        draw_arc(ctx, &ring, &pen.center, outer, 0, 360);
     } else {
         const float gap = c.half_gap * (1.0f - m);
         const lv_opa_t track = scale_opa(to_opa(TRACK_OPA / 255.0f * (1.0f - m)), c.opa);
@@ -1500,13 +1598,13 @@ void draw_smiley(lv_event_t *e)
             const float start = 270.0f + q * 90.0f + gap, span = 90.0f - 2.0f * gap;
             if (track > LV_OPA_MIN) {
                 ring.opa = track;
-                lv_draw_arc(ctx, &ring, &pen.center, outer, (uint16_t)lroundf(start),
+                draw_arc(ctx, &ring, &pen.center, outer, (uint16_t)lroundf(start),
                             (uint16_t)lroundf(start + span));
             }
             const float fill = span * lerpf(c.quad_fill[q] / 1000.0f, 1.0f, m);
             if (fill >= 1.0f) {
                 ring.opa = c.opa;
-                lv_draw_arc(ctx, &ring, &pen.center, outer, (uint16_t)lroundf(start),
+                draw_arc(ctx, &ring, &pen.center, outer, (uint16_t)lroundf(start),
                             (uint16_t)lroundf(start + fill));
             }
         }
@@ -1558,7 +1656,7 @@ void draw_smiley(lv_event_t *e)
 // After the intro only the twinkling stars and sparkles change; redraw just those.
 void invalidate_smiley_loops(const Card &c)
 {
-    const lv_area_t &box = c.face->coords;
+    const lv_area_t box = obj_coords(c.face);
     const float k = c.r / SMILEY_UNIT;
     const lv_coord_t cx = (lv_coord_t)((box.x1 + box.x2 + 1) / 2), cy = (lv_coord_t)((box.y1 + box.y2 + 1) / 2);
     const auto invalidate = [&](float x, float y, float half) {
@@ -1580,7 +1678,7 @@ void create_card(int color)
     Card &c = s_cards[color];
     c.obj = lv_obj_create(s_view);
     lv_obj_remove_style_all(c.obj);
-    lv_obj_clear_flag(c.obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(c.obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(c.obj, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(c.obj, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(c.obj, lv_color_white(), LV_STATE_PRESSED);
@@ -1602,7 +1700,7 @@ void create_card(int color)
     lv_obj_add_flag(c.icon, LV_OBJ_FLAG_HIDDEN);
     c.face = lv_obj_create(c.obj);
     lv_obj_remove_style_all(c.face);
-    lv_obj_clear_flag(c.face, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(c.face, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(c.face, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(c.face, draw_smiley, LV_EVENT_DRAW_MAIN, &c);
     c.cx = c.cy = c.r = -1;
@@ -1794,7 +1892,7 @@ void build_add_button()
 {
     s_add = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_add);
-    lv_obj_clear_flag(s_add, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_add, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_add, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_radius(s_add, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_color(s_add, lv_color_hex(COLOR_OUTLINE), 0);
@@ -1849,7 +1947,7 @@ void apply_add(uint32_t now_ms)
     if (opa > LV_OPA_70) {
         lv_obj_add_flag(s_add, LV_OBJ_FLAG_CLICKABLE);
     } else {
-        lv_obj_clear_flag(s_add, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(s_add, LV_OBJ_FLAG_CLICKABLE);
     }
 }
 
@@ -1864,13 +1962,13 @@ void on_layout_changed()
     if (s_core->count == 0) {
         lv_obj_add_flag(s_view, LV_OBJ_FLAG_CLICKABLE);
     } else {
-        lv_obj_clear_flag(s_view, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(s_view, LV_OBJ_FLAG_CLICKABLE);
     }
 }
 
 // ---- Settings screen --------------------------------------------------------------------
 
-void show_screen(lv_obj_t *scr) { lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_ON, 220, 0, false); }
+void show_screen(lv_obj_t *scr) { lv_screen_load_anim(scr, LV_SCREEN_LOAD_ANIM_FADE_IN, 220, 0, false); }
 
 void refresh_settings()
 {
@@ -1945,7 +2043,7 @@ lv_obj_t *make_button(lv_obj_t *parent, lv_coord_t w, lv_coord_t h, uint32_t bg,
 {
     lv_obj_t *btn = lv_obj_create(parent);
     lv_obj_remove_style_all(btn);
-    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(btn, w, h);
     lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
@@ -1965,7 +2063,7 @@ void build_settings()
 {
     s_settings_scr = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(s_settings_scr, lv_color_black(), 0);
-    lv_obj_clear_flag(s_settings_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_settings_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     s_set_title = make_label(s_settings_scr, &tb_font_20, COLOR_MUTED, "");
     lv_obj_align(s_set_title, LV_ALIGN_TOP_MID, 0, 48);
@@ -2044,14 +2142,14 @@ void ui_init(brush_core_t *core, uint32_t now_ms)
     s_core = core;
     brush_scene_init(&s_scene, core, now_ms);
 
-    s_main_scr = lv_scr_act();
+    s_main_scr = lv_screen_active();
     lv_obj_set_style_bg_color(s_main_scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_main_scr, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(s_main_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_main_scr, LV_OBJ_FLAG_SCROLLABLE);
 
     s_view = lv_obj_create(s_main_scr);
     lv_obj_remove_style_all(s_view);
-    lv_obj_clear_flag(s_view, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_remove_flag(s_view, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_set_size(s_view, LCD_WIDTH, LCD_HEIGHT);
     for (lv_event_code_t code : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_LONG_PRESSED, LV_EVENT_RELEASED}) {
         lv_obj_add_event_cb(s_view, idle_event_cb, code, nullptr);
@@ -2070,7 +2168,7 @@ void ui_init(brush_core_t *core, uint32_t now_ms)
 void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_second,
                const UiSettings &settings, bool screensaver)
 {
-    if (lv_scr_act() != s_main_scr) {
+    if (lv_screen_active() != s_main_scr) {
         return;
     }
     if (s_txt != brush_strings(settings.lang)) {
@@ -2094,7 +2192,7 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
                 update_card_content(card, index, now_ms, settings.count_up);
             }
         } else {
-            lv_obj_clear_flag(card.obj, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_remove_flag(card.obj, LV_OBJ_FLAG_CLICKABLE);
         }
     }
     apply_add(now_ms);
@@ -2116,7 +2214,7 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
             const int sec = local_time->tm_sec;
             const uint16_t start = sec == 0 ? (uint16_t)(millis_in_second * 360 / 1000) : 0;
             const uint16_t end = sec == 0 ? 360 : (uint16_t)((sec * 10 + millis_in_second / 100) * 360 / 600);
-            lv_arc_set_angles(s_seconds_arc, start, end);
+            ring_set_angles(start, end);
         }
         char date[40];
         brush_format_date(settings.lang, local_time->tm_wday, local_time->tm_mday, local_time->tm_mon, date,
@@ -2130,7 +2228,7 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
 
 bool ui_animating(uint32_t now_ms)
 {
-    if (lv_scr_act() == s_main_scr) {
+    if (lv_screen_active() == s_main_scr) {
         for (const Card &c : s_cards) {
             if (c.smiley && c.opa > LV_OPA_MIN && now_ms - c.smiley_ms < SMILEY_INTRO_MS) {
                 return true;
@@ -2138,7 +2236,7 @@ bool ui_animating(uint32_t now_ms)
         }
     }
     return brush_scene_animating(&s_scene, now_ms) ||
-           (lv_scr_act() == s_main_scr && s_saver_transitioning);
+           (lv_screen_active() == s_main_scr && s_saver_transitioning);
 }
 
 void ui_timer_event(const brush_event_t &event, uint32_t now_ms)

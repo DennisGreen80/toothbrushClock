@@ -1,9 +1,10 @@
 #include "board/rtc_pcf85063.h"
 
-#include <Arduino.h>
-#include <Wire.h>
+#include <string.h>
 
+#include "board/i2c_bus.h"
 #include "board/pins.h"
+#include "esp_log.h"
 
 namespace {
 
@@ -13,6 +14,8 @@ constexpr uint8_t SECONDS_OS_FLAG = 0x80; // oscillator stopped, time integrity 
 constexpr uint8_t CONTROL_1_CAP_12PF5 = 0x01;
 constexpr int YEAR_BASE = 2000;
 
+i2c_master_dev_handle_t s_dev = nullptr;
+
 uint8_t to_bcd(int v) { return (uint8_t)(((v / 10) << 4) | (v % 10)); }
 int from_bcd(uint8_t v) { return ((v >> 4) * 10) + (v & 0x0F); }
 
@@ -20,31 +23,23 @@ int from_bcd(uint8_t v) { return ((v >> 4) * 10) + (v & 0x0F); }
 
 bool rtc_init()
 {
-    Wire.beginTransmission(I2C_ADDR_PCF85063);
-    Wire.write(REG_CONTROL_1);
-    Wire.write(CONTROL_1_CAP_12PF5); // running, 24 h mode
-    bool ok = Wire.endTransmission() == 0;
+    if (!s_dev) {
+        s_dev = i2c_bus_add(I2C_ADDR_PCF85063);
+    }
+    const uint8_t control = CONTROL_1_CAP_12PF5; // running, 24 h mode
+    const bool ok = i2c_write_reg(s_dev, REG_CONTROL_1, 1, &control, 1);
     if (!ok) {
-        Serial.println("[rtc] PCF85063 not responding");
+        ESP_LOGE("rtc", "PCF85063 not responding");
     }
     return ok;
 }
 
 bool rtc_read(struct tm *out)
 {
-    Wire.beginTransmission(I2C_ADDR_PCF85063);
-    Wire.write(REG_SECONDS);
-    if (Wire.endTransmission() != 0) {
-        return false;
-    }
     uint8_t b[7];
-    if (Wire.requestFrom((uint8_t)I2C_ADDR_PCF85063, (uint8_t)7) != 7) {
+    if (!i2c_read_reg(s_dev, REG_SECONDS, 1, b, sizeof(b))) {
         return false;
     }
-    for (int i = 0; i < 7; i++) {
-        b[i] = Wire.read();
-    }
-
     memset(out, 0, sizeof(*out));
     out->tm_sec = from_bcd(b[0] & 0x7F);
     out->tm_min = from_bcd(b[1] & 0x7F);
@@ -60,14 +55,9 @@ bool rtc_read(struct tm *out)
 bool rtc_write(const struct tm *t)
 {
     // Writing the seconds register also clears the oscillator-stopped flag.
-    Wire.beginTransmission(I2C_ADDR_PCF85063);
-    Wire.write(REG_SECONDS);
-    Wire.write(to_bcd(t->tm_sec) & 0x7F);
-    Wire.write(to_bcd(t->tm_min));
-    Wire.write(to_bcd(t->tm_hour));
-    Wire.write(to_bcd(t->tm_mday));
-    Wire.write((uint8_t)(t->tm_wday & 0x07));
-    Wire.write(to_bcd(t->tm_mon + 1));
-    Wire.write(to_bcd((t->tm_year + 1900 - YEAR_BASE) % 100));
-    return Wire.endTransmission() == 0;
+    const uint8_t b[7] = {
+        (uint8_t)(to_bcd(t->tm_sec) & 0x7F), to_bcd(t->tm_min), to_bcd(t->tm_hour), to_bcd(t->tm_mday),
+        (uint8_t)(t->tm_wday & 0x07), to_bcd(t->tm_mon + 1), to_bcd((t->tm_year + 1900 - YEAR_BASE) % 100),
+    };
+    return i2c_write_reg(s_dev, REG_SECONDS, 1, b, sizeof(b));
 }

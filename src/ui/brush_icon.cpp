@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "ui/lv_compat.h"
+
 namespace {
 
 struct IconData {
@@ -22,22 +24,23 @@ const int16_t kBristles[][4] = {
     {92, 6, 99, 26},
 };
 
-void fill(lv_draw_ctx_t *ctx, lv_draw_rect_dsc_t *dsc, const lv_area_t &box, lv_coord_t w, const int16_t s[4])
+void fill(lv_layer_t *layer, lv_draw_rect_dsc_t *dsc, const lv_area_t &box, lv_coord_t w, const int16_t s[4])
 {
     lv_area_t a = {
         (lv_coord_t)(box.x1 + s[0] * w / 100), (lv_coord_t)(box.y1 + s[1] * w / 100),
         (lv_coord_t)(box.x1 + s[2] * w / 100 - 1), (lv_coord_t)(box.y1 + s[3] * w / 100 - 1)};
-    lv_draw_rect(ctx, dsc, &a);
+    lv_draw_rect(layer, dsc, &a);
 }
 
 void draw_event_cb(lv_event_t *e)
 {
-    lv_obj_t *obj = lv_event_get_target(e);
+    lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
     IconData *d = (IconData *)lv_obj_get_user_data(obj);
     if (!d || d->opa <= LV_OPA_MIN) {
         return;
     }
-    lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    const lv_area_t coords = obj_coords(obj);
     const lv_coord_t w = lv_obj_get_width(obj);
 
     lv_draw_rect_dsc_t dsc;
@@ -46,18 +49,18 @@ void draw_event_cb(lv_event_t *e)
     dsc.bg_opa = d->opa;
     dsc.bg_color = d->body;
     for (const auto &s : kBody) {
-        fill(ctx, &dsc, obj->coords, w, s);
+        fill(layer, &dsc, coords, w, s);
     }
     dsc.bg_color = d->bristles;
     for (const auto &s : kBristles) {
-        fill(ctx, &dsc, obj->coords, w, s);
+        fill(layer, &dsc, coords, w, s);
     }
 }
 
 void delete_event_cb(lv_event_t *e)
 {
-    lv_obj_t *obj = lv_event_get_target(e);
-    lv_mem_free(lv_obj_get_user_data(obj));
+    lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
+    lv_free(lv_obj_get_user_data(obj));
     lv_obj_set_user_data(obj, nullptr);
 }
 
@@ -67,8 +70,8 @@ lv_obj_t *brush_icon_create(lv_obj_t *parent)
 {
     lv_obj_t *obj = lv_obj_create(parent);
     lv_obj_remove_style_all(obj);
-    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    IconData *d = (IconData *)lv_mem_alloc(sizeof(IconData));
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    IconData *d = (IconData *)lv_malloc(sizeof(IconData));
     memset(d, 0, sizeof(*d));
     d->body = lv_color_white();
     d->bristles = lv_color_white();
@@ -88,7 +91,7 @@ void brush_icon_set_width(lv_obj_t *icon, lv_coord_t width)
 void brush_icon_set_colors(lv_obj_t *icon, lv_color_t body, lv_color_t bristles, lv_opa_t opa)
 {
     IconData *d = (IconData *)lv_obj_get_user_data(icon);
-    if (lv_color_to16(d->body) == lv_color_to16(body) && lv_color_to16(d->bristles) == lv_color_to16(bristles) &&
+    if (lv_color_eq(d->body, body) && lv_color_eq(d->bristles, bristles) &&
         d->opa == opa) {
         return;
     }

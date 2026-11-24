@@ -1,0 +1,20 @@
+menu "Toothbrush timer"
+
+    config TOOTHBRUSH_LCD_PCLK_MHZ
+        int "LCD pixel clock (MHz)"
+        range 8 24
+        default 18
+        help
+            Refresh rate is pclk / (548 * 508): 16 MHz ~57 Hz, 18 MHz ~65 Hz.
+            Below ~12 MHz colored backgrounds visibly pulse in intensity. With bounce buffers the
+            PSRAM frame buffer keeps up at higher clocks; lower this if the picture shifts or tears.
+
+    config TOOTHBRUSH_LCD_BOUNCE_LINES
+        int "LCD bounce buffer height (lines)"
+        range 4 40
+        default 10
+        help
+            Height of each of the two internal-RAM bounce buffers (480 pixels per line, 2 bytes per
+            pixel). Must divide 480. Larger buffers tolerate longer PSRAM stalls but use more RAM.
+
+endmenu
