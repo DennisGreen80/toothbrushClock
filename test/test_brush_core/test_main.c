@@ -370,6 +370,30 @@ static void test_date_format_per_language(void)
     TEST_ASSERT_EQUAL_STRING("L\xC3\xB8rdag 5. maj", buf); /* "Lørdag 5. maj" */
 }
 
+static void test_xmas_countdown_phases(void)
+{
+    int days = -1;
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_TO_DECEMBER, brush_xmas_countdown(2026, 10, 25, &days));
+    TEST_ASSERT_EQUAL(6, days);
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_TO_DECEMBER, brush_xmas_countdown(2026, 10, 30, &days));
+    TEST_ASSERT_EQUAL(1, days);
+    TEST_ASSERT_EQUAL_STRING("dag til december", brush_xmas_text(BRUSH_LANG_DA, BRUSH_XMAS_TO_DECEMBER, days));
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_TO_CHRISTMAS, brush_xmas_countdown(2026, 11, 1, &days));
+    TEST_ASSERT_EQUAL(23, days);
+    TEST_ASSERT_EQUAL_STRING("dage til jul", brush_xmas_text(BRUSH_LANG_DA, BRUSH_XMAS_TO_CHRISTMAS, days));
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_TO_CHRISTMAS, brush_xmas_countdown(2026, 11, 23, &days));
+    TEST_ASSERT_EQUAL(1, days);
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_MERRY, brush_xmas_countdown(2026, 11, 24, &days));
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_MERRY, brush_xmas_countdown(2026, 11, 26, &days));
+    /* After Christmas it counts to next December, across the new year and leap days. */
+    TEST_ASSERT_EQUAL(BRUSH_XMAS_TO_DECEMBER, brush_xmas_countdown(2026, 11, 27, &days));
+    TEST_ASSERT_EQUAL(339, days);
+    brush_xmas_countdown(2028, 1, 28, &days);
+    TEST_ASSERT_EQUAL(277, days);
+    brush_xmas_countdown(2027, 1, 28, &days);
+    TEST_ASSERT_EQUAL(276, days);
+}
+
 /* ---- Oral-B ------------------------------------------------------------------------------ */
 
 static const uint8_t BRUSH_A[6] = {0x78, 0xDB, 0x2F, 0xC2, 0x48, 0xBE};
@@ -523,6 +547,7 @@ int main(void)
     RUN_TEST(test_scene_removed_ring_fades_and_others_move_up);
     RUN_TEST(test_scene_pulse_returns_to_rest);
     RUN_TEST(test_date_format_per_language);
+    RUN_TEST(test_xmas_countdown_phases);
     RUN_TEST(test_oralb_parse_real_advertisements);
     RUN_TEST(test_oralb_start_syncs_to_brush_without_replaying_marks);
     RUN_TEST(test_oralb_pause_resume_and_end);

@@ -53,7 +53,7 @@ constexpr uint32_t UI_TASK_STACK = 16 * 1024;
 brush_core_t s_core;
 oralb_tracker_t s_oralb;
 nvs_handle_t s_nvs = 0;
-UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC, 100, true, DEFAULT_DURATION_S};
+UiSettings s_settings = {false, true, DEFAULT_LANG, CLOCK_FACE_CLASSIC, 100, true, DEFAULT_DURATION_S, 0};
 
 uint32_t s_last_activity_ms = 0;
 uint8_t s_brightness = 0;
@@ -201,6 +201,12 @@ uint16_t nvs_u16(const char *key, uint16_t fallback)
     return s_nvs && nvs_get_u16(s_nvs, key, &v) == ESP_OK ? v : fallback;
 }
 
+uint32_t nvs_u32(const char *key, uint32_t fallback)
+{
+    uint32_t v = fallback;
+    return s_nvs && nvs_get_u32(s_nvs, key, &v) == ESP_OK ? v : fallback;
+}
+
 void init_nvs()
 {
     esp_err_t err = nvs_flash_init();
@@ -231,6 +237,7 @@ void load_settings()
     s_settings.custom_font = nvs_u8("custom_font", 1) != 0;
     const uint16_t duration = nvs_u16("duration", DEFAULT_DURATION_S);
     s_settings.duration_s = duration >= 20 && duration <= 600 ? duration : DEFAULT_DURATION_S;
+    s_settings.flags_date = nvs_u32("flags_date", 0);
 }
 
 void save_settings()
@@ -245,6 +252,7 @@ void save_settings()
     nvs_set_u8(s_nvs, "brightness", s_settings.brightness);
     nvs_set_u8(s_nvs, "custom_font", s_settings.custom_font);
     nvs_set_u16(s_nvs, "duration", (uint16_t)s_settings.duration_s);
+    nvs_set_u32(s_nvs, "flags_date", s_settings.flags_date);
     if (nvs_commit(s_nvs) != ESP_OK) {
         ESP_LOGW(TAG, "saving settings failed");
     }

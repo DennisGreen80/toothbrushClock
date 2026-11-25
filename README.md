@@ -48,14 +48,34 @@ Use **Exit screensaver** in the browser preview to wake the clock without starti
 ### Birthday flags
 
 On a listed birthday, two Danish flags wave above the idle clock, with soft highlights that follow
-the folds. They stay out of the way while a timer is visible or the screensaver is running.
+the folds. While the screensaver is on, a single bigger flag takes their place and drifts with the
+clock. The flags stay out of the way while a timer is visible. To fly them on any other day, switch
+them on in settings (the small Dannebrog button, **✓ / ✕**); they switch off by themselves at
+midnight.
 
-![Birthday flags](docs/screens/13-birthday.svg)
+| Idle clock | Screensaver |
+| :---: | :---: |
+| ![Birthday flags](docs/screens/13-birthday.svg) | ![Birthday flag on the screensaver](docs/screens/13b-birthday-screensaver.svg) |
 
 Add recurring dates to `kBirthdays` in [`src/ui/ui.cpp`](src/ui/ui.cpp) and rebuild the firmware.
 Entries are `{month, day}` (for example, `{6, 14},` is 14 June); no dates are enabled by default.
 To see the animation without changing the date, turn on **Preview birthday flags** in the simulator.
 Use **Birthday flag layout** to compare the default with the mirrored version.
+
+### Christmas countdown
+
+Swipe up on the idle clock for a Christmas countdown on the Christmas face's scene, with slowly
+twinkling strings of lights, snowflakes and presents; swipe down to go
+back (it also returns by itself after 5 minutes without a touch, or when a toothbrush starts a
+timer). Until 1 December it counts **days until December** (Danish: *dage til december*), then
+**days until Christmas** (*dage til jul*, to Christmas Eve), and 24–26 December shows a gold star
+and **Merry Christmas** (*Glædelig jul*). From 27 December it counts to the next December. The
+number and text use Berkshire Swash, or the standard digits and font with custom fonts switched off.
+The simulator's **Date** field previews other days.
+
+| Until December | Until Christmas | 24–26 December |
+| :---: | :---: | :---: |
+| ![Days until December](docs/screens/da/21-countdown-december.svg) | ![Days until Christmas](docs/screens/da/22-countdown-christmas.svg) | ![Merry Christmas](docs/screens/da/23-countdown-merry.svg) |
 
 ### Transitions
 
@@ -132,12 +152,14 @@ Last timer removed – the ring shrinks away and the big clock returns:
 | Toothbrush ring | – while brushing (dismiss when done or showing a smiley) | dismiss the timer (shows its smiley for 6 s) |
 | **+** button / empty slot | add another timer | – |
 
-Swipe left or right on the idle clock to cycle clock faces. A press only counts as a tap if the finger
+Swipe left or right on the idle clock to cycle clock faces, and up for the
+[Christmas countdown](#christmas-countdown) (swipe down to return). A press only counts as a tap if the finger
 stays within ~24 px, so a swipe never starts a timer by accident.
 
 **Settings** lets you set the time (hold the arrows to repeat), switch countdown/count-up,
 mute the buzzer, set the screen brightness (25–100 %, applied immediately; dimming and the
-screensaver scale with it), turn the Christmas faces' custom font on/off (**Aa ✓ / ✕**), choose the
+screensaver scale with it), turn the Christmas faces' custom font on/off (**Aa ✓ / ✕**), fly the
+birthday flags today (Dannebrog **✓ / ✕**, off again at midnight), choose the
 brushing time (**🔔 2:00 / 1:40 / 1:00 / 0:40**) and change
 the language. Settings are stored in flash (NVS); the time is
 written to the RTC.
@@ -247,9 +269,9 @@ src/ui/                   LVGL user interface
   lv_compat.h             small LVGL 9 helpers
   seg_digits.*            scalable segment-style digits (custom drawn)
   brush_icon.*            scalable toothbrush icon (custom drawn)
-  ui.*                    idle clock, adaptive timer rings, settings screen
-  fonts/                  Montserrat 14/20/28 with ÆØÅæøå + LVGL symbols, Berkshire Swash / Fredoka
-                          clock + date fonts for the Christmas faces (generated)
+  ui.*                    idle clock, adaptive timer rings, settings and Christmas countdown screens
+  fonts/                  Montserrat 14/20/28 with ÆØÅæøå + LVGL symbols, Berkshire Swash / Fredoka /
+                          Cinzel Decorative clock + date fonts for the Christmas faces (generated)
 test/test_brush_core/     Unity tests for lib/brush_core
 preview/                  browser simulator + SVG screenshot renderer
 ```
@@ -270,7 +292,7 @@ Tunables (durations, brightness, dimming, default language) are at the top of `s
 colors and layout are in `src/ui/ui.cpp` and `lib/brush_core/src/brush_core.c`.
 
 Montserrat is licensed under the SIL Open Font License 1.1 and FontAwesome Free under the
-SIL OFL 1.1 (fonts); both are redistributed by LVGL. Berkshire Swash and Fredoka (SIL OFL 1.1) come
+SIL OFL 1.1 (fonts); both are redistributed by LVGL. Berkshire Swash, Fredoka and Cinzel Decorative (SIL OFL 1.1) come
 from Google Fonts via [Fontsource](https://fontsource.org/); see `preview/fonts/*-LICENSE.txt`.
 
 ## Translations and fonts
@@ -290,11 +312,13 @@ npx lv_font_conv@1.5.2 --no-compress --no-prefilter --bpp 4 --size 20 \
   --format lvgl --force-fast-kern-format --lv-include lvgl.h -o tb_font_20.c
 ```
 
-The Christmas faces use **Berkshire Swash** (Christmas, Reindeer, Woven Heart) and **Fredoka**
-(Candy Cane) for the idle clock and the date; the small hint stays in Montserrat for legibility.
+The Christmas faces use **Berkshire Swash** (Christmas, Woven Heart, and the countdown screen),
+**Cinzel Decorative** Bold (Reindeer) and **Fredoka** (Candy Cane) for the idle clock and the date;
+the small hint stays in Montserrat for legibility.
 The clock fonts contain only `0-9` and `:`, sized so the widest time clears the settings gear
 (`preview/fonts.html` compares other candidates). Regenerate from the Fontsource WOFF files
-(`npm pack @fontsource/berkshire-swash @fontsource/fredoka`, files in `package/files/`):
+(`npm pack @fontsource/berkshire-swash @fontsource/fredoka @fontsource/cinzel-decorative`, files in
+`package/files/`):
 
 ```sh
 npx lv_font_conv@1.5.2 --no-compress --no-prefilter --bpp 4 --size 126 \
@@ -304,4 +328,10 @@ npx lv_font_conv@1.5.2 --no-compress --no-prefilter --bpp 4 --size 28 \
   --font berkshire-swash-latin-400-normal.woff -r 0x20-0x7F,0xC5,0xC6,0xD8,0xE5,0xE6,0xF8 \
   --format lvgl --force-fast-kern-format --lv-include lvgl.h -o tb_font_berkshire_28.c
 # Fredoka: same with fredoka-latin-600-normal.woff, --size 130 (clock) and 28 (date)
+# Cinzel Decorative: same with cinzel-decorative-latin-700-normal.woff, --size 110 (clock) and 28 (date)
+# Countdown's bigger "1" on the last day: Berkshire Swash, --size 170 -r 0x31 -o tb_font_berkshire_one.c
 ```
+
+lv_font_conv writes LVGL 8 code: in the generated file, wrap the `cache` declaration and the
+`.cache = &cache` member in `#if LVGL_VERSION_MAJOR == 8` (LVGL 9 has no glyph cache there), and make
+the `font_dsc` guard `#if LVGL_VERSION_MAJOR >= 8` – compare with an existing `tb_font_*.c`.

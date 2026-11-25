@@ -42,13 +42,14 @@
     gold: '#F5B640', green: '#527763', ring: ['#FFC557', '#F78E60', '#F48CA5', '#9CC18E'] };
   const CHRISTMAS = { gold: '#FFD58D', snow: '#FFF9E8', track: '#29443A' };
   const CANDY = { red: '#D7263D', white: '#FFFFFF' };
-  // Mirrors face_fonts() in src/ui/ui.cpp. clock: font size per segment-digit height (126 / 130 px at 110),
+  // Mirrors face_fonts() in src/ui/ui.cpp. clock: font size per segment-digit height (126 / 130 / 110 px at 110),
   // sized so the widest time ("00:00" / "22:22") stays clear of the settings gear.
   const FACE_FONTS = {
     berkshire: { family: "'Berkshire Swash', serif", weight: 400, clock: 126 / 110 },
     fredoka: { family: "'Fredoka', sans-serif", weight: 600, clock: 130 / 110 },
+    cinzel: { family: "'Cinzel Decorative', serif", weight: 700, clock: 110 / 110 },
   };
-  const faceFont = face => FACE_FONTS[{ christmas: 'berkshire', reindeer: 'berkshire', heart: 'berkshire', candy: 'fredoka' }[face]];
+  const faceFont = face => FACE_FONTS[{ christmas: 'berkshire', reindeer: 'cinzel', heart: 'berkshire', candy: 'fredoka' }[face]];
   const SETTINGS_GEAR = { cx: 432, cy: 240, r: 22 };
   const FLOWER_MARKS = Array.from({ length: 60 }, (_, i) => {
     const angle = 2 * Math.PI * i / 60;
@@ -59,6 +60,8 @@
     en: {
       language: 'English', hint: 'Tap to start brushing', paused: 'Paused', done: 'Done!', tooHard: 'Too hard', settings: 'Settings',
       countdown: 'Countdown', countUp: 'Count up', sound: 'Sound', muted: 'Muted', face: 'Face', classic: 'Classic', christmas: 'Christmas', reindeer: 'Reindeer', heart: 'Woven Heart', candy: 'Candy Cane', ok: 'Done',
+      daysToDecember: 'days until December', dayToDecember: 'day until December',
+      daysToChristmas: 'days until Christmas', dayToChristmas: 'day until Christmas', merryChristmas: 'Merry Christmas',
       quadrants: ['Upper right', 'Lower right', 'Lower left', 'Upper left'],
       weekdays: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
       months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
@@ -67,6 +70,8 @@
     da: {
       language: 'Dansk', hint: 'Tryk for at børste', paused: 'Pause', done: 'Færdig!', tooHard: 'For hårdt', settings: 'Indstillinger',
       countdown: 'Nedtælling', countUp: 'Tæl op', sound: 'Lyd', muted: 'Lydløs', face: 'Urskive', classic: 'Klassisk', christmas: 'Jul', reindeer: 'Rensdyr', heart: 'Julehjerte', candy: 'Slikstok', ok: 'Færdig',
+      daysToDecember: 'dage til december', dayToDecember: 'dag til december',
+      daysToChristmas: 'dage til jul', dayToChristmas: 'dag til jul', merryChristmas: 'Glædelig jul',
       quadrants: ['Øverst højre', 'Nederst højre', 'Nederst venstre', 'Øverst venstre'],
       weekdays: ['Søndag', 'Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag'],
       months: ['jan.', 'feb.', 'mar.', 'apr.', 'maj', 'jun.', 'jul.', 'aug.', 'sep.', 'okt.', 'nov.', 'dec.'],
@@ -79,8 +84,24 @@
     face === 'reindeer' ? txt.reindeer : face === 'nineties' ? '90s' :
     face === 'christmas' ? txt.christmas : face === 'flower-power' ? 'Flower Power' :
     face === 'synthwave' ? 'Synthwave' : txt.classic;
+  // Mirrors ui_date_key() in src/ui/ui.h: YYYYMMDD.
+  const dateKey = d => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
   const FONT = "Montserrat, 'Segoe UI', Helvetica, Arial, sans-serif";
   const LINE_H = { 14: 16, 20: 22, 28: 30 };
+
+  // Mirrors brush_xmas_countdown() / brush_xmas_text() in lib/brush_core/src/brush_i18n.c.
+  function xmasCountdown(date) {
+    const y = date.getFullYear(), m = date.getMonth(), d = date.getDate();
+    if (m === 11 && d >= 24 && d <= 26) return { phase: 'merry', days: 0 };
+    if (m === 11 && d < 24) return { phase: 'christmas', days: 24 - d };
+    const target = Date.UTC(m === 11 ? y + 1 : y, 11, 1);
+    return { phase: 'december', days: Math.round((target - Date.UTC(y, m, d)) / 86400000) };
+  }
+  function xmasText(txt, { phase, days }) {
+    if (phase === 'merry') return txt.merryChristmas;
+    if (phase === 'christmas') return days === 1 ? txt.dayToChristmas : txt.daysToChristmas;
+    return days === 1 ? txt.dayToDecember : txt.daysToDecember;
+  }
 
   const idiv = (a, b) => Math.trunc(a / b);
 
@@ -684,38 +705,43 @@
     return s;
   }
 
-  function birthdayFlags(now, opa, mirrorLeft) {
+  // Mirrors s_flags / draw_birthday_flag() in src/ui/ui.cpp: two flags on the idle clock and one
+  // bigger flag (scale 1.4) on the screensaver.
+  const BIRTHDAY_FLAGS = [
+    { x: 96, y: 70, scale: 1, offsetMs: 0 },
+    { x: 302, y: 70, scale: 1, offsetMs: 800 },
+    { x: 182, y: 40, scale: 1.4, offsetMs: 0, saver: true },
+  ];
+  function birthdayFlag(now, opa, flag, i, mirror, shiftX = 0, shiftY = 0) {
     const waveMs = 2400, frameMs = 50;
-    return [96, 302].map((left, i) => {
-      const phaseMs = Math.floor((now % waveMs) / frameMs) * frameMs + i * waveMs / 3;
-      const phase = 2 * Math.PI * phaseMs / waveMs;
-      const rect = (x, y, w, h) => `M${x} ${y}h${w}v${h}h${-w}z`;
-      let red = '', white = '';
-      let redStops = '', whiteStops = '';
-      for (let x = 0; x < 74; x += 2) {
-        const u = x / 74, fold = phase - 7 * u;
-        const y = 10 + Math.round(8 * u * Math.sin(fold));
-        const light = 0.5 + (0.25 + 0.22 * u) * Math.cos(fold);
-        const offset = ((x + 1) / 74).toFixed(4);
-        redStops += `<stop offset="${offset}" stop-color="${mix('#DE2942', '#A81027', light)}"/>`;
-        whiteStops += `<stop offset="${offset}" stop-color="${mix('#FFF9F8', '#E5DCE1', light)}"/>`;
-        if (x >= 24 && x < 32) {
-          white += rect(4 + x, y, 2, 56);
-        } else {
-          red += rect(4 + x, y, 2, 24) + rect(4 + x, y + 32, 2, 24);
-          white += rect(4 + x, y + 24, 2, 8);
-        }
+    const phaseMs = (Math.floor((now % waveMs) / frameMs) * frameMs + flag.offsetMs) % waveMs;
+    const phase = 2 * Math.PI * phaseMs / waveMs;
+    const rect = (x, y, w, h) => `M${x} ${y}h${w}v${h}h${-w}z`;
+    let red = '', white = '';
+    let redStops = '', whiteStops = '';
+    for (let x = 0; x < 74; x += 2) {
+      const u = x / 74, fold = phase - 7 * u;
+      const y = 10 + 8 * u * Math.sin(fold);
+      const light = 0.5 + (0.25 + 0.22 * u) * Math.cos(fold);
+      const offset = ((x + 1) / 74).toFixed(4);
+      redStops += `<stop offset="${offset}" stop-color="${mix('#DE2942', '#A81027', light)}"/>`;
+      whiteStops += `<stop offset="${offset}" stop-color="${mix('#FFF9F8', '#E5DCE1', light)}"/>`;
+      if (x >= 24 && x < 32) {
+        white += rect(4 + x, y, 2, 56);
+      } else {
+        red += rect(4 + x, y, 2, 24) + rect(4 + x, y + 32, 2, 24);
+        white += rect(4 + x, y + 24, 2, 8);
       }
-      const transform = mirrorLeft && i === 0
-        ? `translate(${left + 82} 70) scale(-1 1)` : `translate(${left} 70)`;
-      const gradient = (color, stops) =>
-        `<linearGradient id="flag-${i}-${color}" gradientUnits="userSpaceOnUse" x1="4" y1="0" x2="78" y2="0">${stops}</linearGradient>`;
-      return `<g class="birthday-flag" transform="${transform}" opacity="${opa.toFixed(3)}">` +
-        `<defs>${gradient('red', redStops)}${gradient('white', whiteStops)}</defs>` +
-        `<rect x="2" y="4" width="2" height="76" fill="#88818A"/>` +
-        `<rect x="1" y="2" width="4" height="4" fill="#EAC77B"/>` +
-        `<path d="${red}" fill="url(#flag-${i}-red)"/><path d="${white}" fill="url(#flag-${i}-white)"/></g>`;
-    }).join('');
+    }
+    const left = flag.x + shiftX, top = flag.y + shiftY, k = flag.scale;
+    const transform = mirror ? `translate(${left + 82 * k} ${top}) scale(${-k} ${k})` : `translate(${left} ${top}) scale(${k})`;
+    const gradient = (color, stops) =>
+      `<linearGradient id="flag-${i}-${color}" gradientUnits="userSpaceOnUse" x1="4" y1="0" x2="78" y2="0">${stops}</linearGradient>`;
+    return `<g class="birthday-flag" transform="${transform}" opacity="${opa.toFixed(3)}">` +
+      `<defs>${gradient('red', redStops)}${gradient('white', whiteStops)}</defs>` +
+      `<rect x="2" y="4" width="2" height="76" fill="#88818A"/>` +
+      `<rect x="1" y="2" width="4" height="4" fill="#EAC77B"/>` +
+      `<path d="${red}" fill="url(#flag-${i}-red)"/><path d="${white}" fill="url(#flag-${i}-white)"/></g>`;
   }
 
   function paletteColor(colors, progress) {
@@ -1165,10 +1191,17 @@
     }
     if (fontOpa < 0.99) s += segCentered(240 + shiftX, top + shiftY, h, clockText(date), clockColor, 1 - fontOpa);
 
-    const flagOpa = idleOpa * (1 - saverLevel);
-    if (core.count === 0 && flagOpa > 0.01 &&
-        state.birthdayDates?.some(([month, day]) => month === date.getMonth() + 1 && day === date.getDate())) {
-      s += birthdayFlags(t, flagOpa, state.mirrorBirthdayFlags);
+    // Listed birthdays, or the day the flags were switched on in settings (update_birthday_flags()).
+    const isBirthday = state.flagsDate === dateKey(date) ||
+      state.birthdayDates?.some(([month, day]) => month === date.getMonth() + 1 && day === date.getDate());
+    if (core.count === 0 && isBirthday) {
+      BIRTHDAY_FLAGS.forEach((flag, i) => {
+        const opa = idleOpa * (flag.saver ? saverLevel : 1 - saverLevel);
+        if (opa > 0.01) {
+          s += flag.saver ? birthdayFlag(t, opa, flag, i, false, shiftX, shiftY)
+            : birthdayFlag(t, opa, flag, i, state.mirrorBirthdayFlags && i === 0);
+        }
+      });
     }
 
     for (let c = 0; c < MAX_TIMERS; c++) {
@@ -1216,8 +1249,9 @@
     { id: 'mode', x: 44, y: 286, w: 140, h: 44 },
     { id: 'sound', x: 192, y: 286, w: 128, h: 44 },
     { id: 'bright', x: 328, y: 286, w: 108, h: 44 },
-    { id: 'face', x: 60, y: 338, w: 240, h: 44 },
-    { id: 'font', x: 308, y: 338, w: 112, h: 44 },
+    { id: 'face', x: 47, y: 338, w: 236, h: 44 },
+    { id: 'font', x: 289, y: 338, w: 69, h: 44 },
+    { id: 'flags', x: 364, y: 338, w: 69, h: 44 },
     { id: 'duration', x: 99, y: 390, w: 90, h: 44 },
     { id: 'lang', x: 195, y: 390, w: 90, h: 44 },
     { id: 'done', x: 291, y: 390, w: 90, h: 44 },
@@ -1238,6 +1272,14 @@
       else if (b.id === 'bright') s += text(cx, cy, 20, COLOR_TEXT, `\u25D0 ${st.brightness || 100}%`);
       else if (b.id === 'face') s += text(cx, cy, 20, COLOR_TEXT, `${txt.face}: ${faceName(st.clockFace, txt)}`);
       else if (b.id === 'font') s += text(cx, cy, 20, COLOR_TEXT, `Aa ${st.customFont === false ? '\u2715' : '\u2713'}`);
+      else if (b.id === 'flags') {
+        // Small Dannebrog + check mark (build_settings() in src/ui/ui.cpp).
+        const fx = b.x + 9, fy = b.y + 13;
+        s += `<rect x="${fx}" y="${fy}" width="25" height="18" fill="#C8102E"/>` +
+          `<rect x="${fx + 8}" y="${fy}" width="3" height="18" fill="#FFFFFF"/>` +
+          `<rect x="${fx}" y="${fy + 7}" width="25" height="3" fill="#FFFFFF"/>`;
+        s += text(b.x + 49, cy, 20, COLOR_TEXT, st.flagsDate && st.flagsDate === st.today ? '\u2713' : '\u2715');
+      }
       else if (b.id === 'duration') {
         const d = st.duration || 120;
         s += text(cx, cy, 20, COLOR_TEXT, `\u{1F514}\uFE0E ${Math.floor(d / 60)}:${pad2(d % 60)}`);
@@ -1248,21 +1290,107 @@
     return s;
   }
 
+  // Mirrors init_bulbs() / bulb_level() / paint_countdown_extras() in src/ui/ui.cpp.
+  const TWINKLE_STEPS = 12;
+  const BULBS = [200, 290].flatMap((start, s) => Array.from({ length: 8 }, (_, i) => {
+    const n = s * 8 + i, a = (start + 3 + i * 6.3) * Math.PI / 180, period = 3600 + (n % 3) * 700;
+    return { x: 240 + Math.round(203 * Math.cos(a)), y: 240 + Math.round(203 * Math.sin(a)),
+      color: ['#E5484D', '#FFD58D', '#5BBF7A', '#6CB6FF'][(i + Math.floor(start / 10)) % 4],
+      period, phase: (n * 1663) % period };
+  }));
+  function countdownExtras(now) {
+    let s = '';
+    const circle = (x, y, r, color, opa = 1) => {
+      s += `<circle cx="${x}" cy="${y}" r="${r + 0.5}" fill="${color}"${opa < 1 ? ` fill-opacity="${opa.toFixed(3)}"` : ''}/>`;
+    };
+    const line = (x, y, ex, ey, w, color) => {
+      s += `<path d="M${x} ${y} L${ex} ${ey}" stroke="${color}" stroke-width="${w}" stroke-linecap="round"/>`;
+    };
+    const star = (cx, cy, r) => {
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const a = Math.PI * i / 5 - Math.PI / 2, rr = i % 2 ? r * 0.42 : r;
+        pts.push(`${(cx + rr * Math.cos(a)).toFixed(1)},${(cy + rr * Math.sin(a)).toFixed(1)}`);
+      }
+      s += `<polygon points="${pts.join(' ')}" fill="${CHRISTMAS.gold}"/>`;
+    };
+    for (const start of [200, 290]) s += arcPath(240, 240, 211, 1, start, start + 50, '#A08354', 1);
+    for (const b of BULBS) {
+      const p = ((now + b.phase) % b.period) / b.period;
+      const level = Math.round((0.5 + 0.5 * Math.cos(2 * Math.PI * p)) * TWINKLE_STEPS);
+      circle(b.x, b.y, 4, mix(b.color, '#112A25', (90 + idiv(165 * level, TWINKLE_STEPS)) / 255));
+      circle(b.x - 1, b.y - 1, 1, CHRISTMAS.snow, level / TWINKLE_STEPS);
+    }
+    for (const [x, y, r] of [[78, 258, 12], [402, 258, 12], [108, 200, 7], [372, 200, 7]]) {
+      for (let k = 0; k < 3; k++) {
+        const a = k * Math.PI / 3 + Math.PI / 2;
+        const dx = Math.round(r * Math.cos(a)), dy = Math.round(r * Math.sin(a));
+        line(x - dx, y - dy, x + dx, y + dy, 2, '#CFE3DA');
+      }
+      circle(x, y, 2, CHRISTMAS.snow);
+    }
+    star(240, 364, 9);
+    for (const [x, y, w, h, color] of [[136, 405, 20, 16, '#C0392B'], [324, 408, 17, 13, '#2E8B57']]) {
+      s += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${color}"/>`;
+      s += `<rect x="${x + idiv(w, 2) - 1}" y="${y}" width="3" height="${h}" fill="${CHRISTMAS.gold}"/>`;
+      s += `<rect x="${x}" y="${y + idiv(h, 2) - 1}" width="${w}" height="3" fill="${CHRISTMAS.gold}"/>`;
+      circle(x + idiv(w, 2) - 3, y - 2, 3, CHRISTMAS.gold);
+      circle(x + idiv(w, 2) + 3, y - 2, 3, CHRISTMAS.gold);
+    }
+    return s;
+  }
+
+  // Christmas countdown screen (mirrors build_countdown() / update_countdown() in src/ui/ui.cpp).
+  function renderCountdown(state) {
+    const txt = strings(state.lang);
+    const cd = xmasCountdown(state.date);
+    const font = state.customFont !== false ? FACE_FONTS.berkshire : null;
+    let s = christmasBackdrop(1) + countdownExtras(state.animNow !== undefined ? state.animNow : state.now || 0);
+    if (cd.phase === 'merry') {
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const a = Math.PI * i / 5 - Math.PI / 2, r = i % 2 ? 62 * 0.42 : 62;
+        pts.push(`${(240 + r * Math.cos(a)).toFixed(1)},${(212 + r * Math.sin(a)).toFixed(1)}`);
+      }
+      s += `<polygon points="${pts.join(' ')}" fill="${CHRISTMAS.gold}"/>`;
+    } else if (font) {
+      // The lone "1" on the last day is drawn 1.35x bigger (tb_font_berkshire_one).
+      s += text(240, 212, cd.days === 1 ? 170 : 126, CHRISTMAS.snow, String(cd.days), font.weight, 1, font.family);
+    } else {
+      const h = cd.days === 1 ? idiv(110 * 135, 100) : 110;
+      s += segCentered(240, 212 - idiv(h, 2), h, String(cd.days), CHRISTMAS.snow);
+    }
+    s += text(240, 301 + LINE_H[28] / 2, 28, CHRISTMAS.gold, xmasText(txt, cd), font ? font.weight : 500, 1, font && font.family);
+    return s;
+  }
+
+  function renderScreen(state, screen) {
+    if (screen === 'settings') return renderSettings(state.settings);
+    if (screen === 'countdown') return renderCountdown(state);
+    return renderMain(Object.assign({}, state, { scene: state.scene || new BrushScene(state.core, state.animNow !== undefined ? state.animNow : state.now) }));
+  }
+
   /**
    * Renders a full device frame.
-   * state: { screen: 'main'|'settings', core, scene?, now, animNow?, date, countUp, lang: 'en'|'da',
-   *          clockFace?, saverLevel?, saverElapsedMs?, birthdayDates?: [month, day][], mirrorBirthdayFlags?,
-   *          settings: {hour, minute, countUp, sound, lang, clockFace?} }
+   * state: { screen: 'main'|'settings'|'countdown', core, scene?, now, animNow?, date, countUp, lang: 'en'|'da',
+   *          clockFace?, customFont?, flagsDate?, saverLevel?, saverElapsedMs?, birthdayDates?: [month, day][],
+   *          mirrorBirthdayFlags?, settings: {hour, minute, countUp, sound, lang, clockFace?},
+   *          slide?: { from: screen, progress: 0..1, up: bool } (LV_SCREEN_LOAD_ANIM_MOVE_TOP/BOTTOM) }
    * Without a scene the main screen is drawn fully settled (no transition in progress).
    */
   function renderSVG(state, opts) {
     const bezel = (opts && opts.bezel) || 20;
     const size = SCREEN + bezel * 2;
-    let content;
-    if (state.screen === 'settings') content = renderSettings(state.settings);
-    else content = renderMain(Object.assign({}, state, { scene: state.scene || new BrushScene(state.core, state.animNow !== undefined ? state.animNow : state.now) }));
+    let content = renderScreen(state, state.screen);
+    if (state.slide && state.slide.progress < 1) {
+      // The new screen moves in from below (up) or above (down) and pushes the old one out.
+      const p = EASE.inOutCubic(clamp01(state.slide.progress)), dir = state.slide.up ? 1 : -1;
+      const from = renderScreen(state, state.slide.from);
+      content = `<g transform="translate(0 ${(-dir * 480 * p).toFixed(1)})"><rect width="480" height="480" fill="#000"/>${from}</g>` +
+        `<g transform="translate(0 ${(dir * 480 * (1 - p)).toFixed(1)})"><rect width="480" height="480" fill="#000"/>${content}</g>`;
+    }
     // state.fontCss: optional @font-face rules embedded so standalone SVGs (docs) show the face fonts.
-    const fontCss = state.fontCss && /font-family="'(Berkshire Swash|Fredoka)'/.test(content) ? `<style>${state.fontCss}</style>` : '';
+    const fontCss = state.fontCss && /font-family="'(Berkshire Swash|Fredoka|Cinzel Decorative)'/.test(content) ? `<style>${state.fontCss}</style>` : '';
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
       `<defs>${fontCss}<clipPath id="screen"><circle cx="240" cy="240" r="240"/></clipPath>` +
       `<radialGradient id="bezel" cx="50%" cy="40%" r="60%"><stop offset="80%" stop-color="#2A2A2D"/><stop offset="100%" stop-color="#111113"/></radialGradient></defs>` +
@@ -1270,7 +1398,7 @@
       `<g transform="translate(${bezel} ${bezel})" clip-path="url(#screen)"><rect width="480" height="480" fill="#000"/>${content}</g></svg>`;
   }
 
-  const api = { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, formatMMSS, renderSVG, segWidth, SETTINGS_BUTTONS, MAX_TIMERS, PULSE, STRINGS, LANGS, CLOCK_FACES, SETTINGS_GEAR };
+  const api = { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, formatMMSS, renderSVG, segWidth, SETTINGS_BUTTONS, MAX_TIMERS, PULSE, STRINGS, LANGS, CLOCK_FACES, SETTINGS_GEAR, xmasCountdown, dateKey };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BrushSim = api;
 })(typeof window !== 'undefined' ? window : globalThis);

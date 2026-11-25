@@ -48,6 +48,8 @@ CONFIG_LV_LOG_PRINTF=y
 CONFIG_LV_USE_THEME_DEFAULT=y
 CONFIG_LV_THEME_DEFAULT_DARK=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
-CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=y
+# Keep LVGL out of IRAM: its render code there pushes the Xtensa exception handlers beyond the
+# range of the vector table's `j` jumps ("dangerous relocation: j: cannot encode").
+# CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM is not set
 CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n

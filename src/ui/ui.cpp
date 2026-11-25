@@ -87,8 +87,8 @@ FaceFonts face_fonts(ClockFace face, bool enabled)
     if (enabled) {
         switch (face) {
         case CLOCK_FACE_CHRISTMAS:
-        case CLOCK_FACE_REINDEER:
         case CLOCK_FACE_HEART: return {&tb_font_berkshire_clock, &tb_font_berkshire_28};
+        case CLOCK_FACE_REINDEER: return {&tb_font_cinzel_clock, &tb_font_cinzel_28};
         case CLOCK_FACE_CANDY: return {&tb_font_fredoka_clock, &tb_font_fredoka_28};
         default: break;
         }
@@ -124,19 +124,26 @@ constexpr std::initializer_list<Birthday> kBirthdays = {
 
 constexpr uint32_t FLAG_FRAME_MS = 50;
 constexpr uint32_t FLAG_WAVE_MS = 2400;
-constexpr lv_coord_t FLAG_BOX_WIDTH = 82;
+constexpr lv_coord_t FLAG_BOX_WIDTH = 82, FLAG_BOX_HEIGHT = 80; // at scale 1
 constexpr lv_coord_t FLAG_CLOTH_WIDTH = 74;
+constexpr float FLAG_SAVER_SCALE = 1.4f;
 
 struct BirthdayFlag {
     lv_obj_t *obj;
-    lv_coord_t x;
+    lv_coord_t x, y; // top-left at rest (the screensaver flag also drifts with the clock)
+    float scale;
+    bool saver; // shown instead of the pair while the screensaver is on
     uint32_t phase_offset_ms;
     uint32_t phase_ms;
     lv_opa_t opa;
+    lv_point_t pos;
 };
 
-BirthdayFlag s_flags[] = {{nullptr, 96, 0, 0, 0},
-                          {nullptr, 302, FLAG_WAVE_MS / 3, 0, 0}};
+BirthdayFlag s_flags[] = {
+    {nullptr, 96, 70, 1.0f, false, 0, 0, 0, {0, 0}},
+    {nullptr, 302, 70, 1.0f, false, FLAG_WAVE_MS / 3, 0, 0, {0, 0}},
+    {nullptr, (lv_coord_t)(240 - FLAG_BOX_WIDTH * FLAG_SAVER_SCALE / 2), 40, FLAG_SAVER_SCALE, true, 0, 0, 0, {0, 0}},
+};
 
 // Ring "breathing" accents (permille of radius, duration ms)
 constexpr uint16_t PULSE_MARK_AMP = 30, PULSE_MARK_MS = 380;
@@ -219,6 +226,7 @@ lv_coord_t s_clock_x = -1, s_clock_y = -1;
 lv_coord_t s_date_x = -1, s_date_y = -1;
 lv_coord_t s_hint_x = -1, s_hint_y = -1;
 float s_saver_level = 0.0f, s_saver_from = 0.0f;
+lv_coord_t s_shift_x = 0, s_shift_y = 0; // screensaver drift of the clock, date and flag
 bool s_saver_target = false, s_saver_transitioning = false;
 uint32_t s_saver_start_ms = 0, s_saver_epoch_ms = 0;
 
@@ -238,6 +246,7 @@ lv_obj_t *s_sound_label = nullptr;
 lv_obj_t *s_bright_label = nullptr;
 int s_set_hour = 0;
 int s_set_minute = 0;
+uint32_t s_set_today = 0; // date key when settings opened (the flags toggle is for that day)
 bool s_time_changed = false;
 UiSettings s_set_values = {false, true, BRUSH_LANG_EN, CLOCK_FACE_CLASSIC, 100, true, 120};
 constexpr uint16_t kDurations[] = {120, 100, 60, 40}; // selectable brushing times (seconds)
@@ -245,6 +254,7 @@ lv_obj_t *s_set_title = nullptr;
 lv_obj_t *s_lang_label = nullptr;
 lv_obj_t *s_face_label = nullptr;
 lv_obj_t *s_font_label = nullptr;
+lv_obj_t *s_flags_label = nullptr;
 lv_obj_t *s_duration_label = nullptr;
 lv_obj_t *s_ok_label = nullptr;
 
@@ -428,9 +438,11 @@ lv_obj_t *make_arc(lv_obj_t *parent)
 // Taps and swipes on the idle clock are told apart on release by how far the finger moved, so a
 // slow swipe never falls through as a tap (which would start a timer).
 constexpr lv_coord_t TAP_SLOP = 24;  // max movement for a tap or long press
-constexpr lv_coord_t SWIPE_MIN = 40; // min horizontal travel for a swipe
+constexpr lv_coord_t SWIPE_MIN = 40; // min travel for a swipe (sideways: face, up: Christmas countdown)
 lv_point_t s_press_start = {0, 0};
 bool s_press_moved = false, s_press_long = false;
+
+void open_countdown(); // countdown screen, see below
 
 void idle_event_cb(lv_event_t *e)
 {
@@ -467,6 +479,8 @@ void idle_event_cb(lv_event_t *e)
     }
     if (LV_ABS(dx) >= SWIPE_MIN && LV_ABS(dx) > LV_ABS(dy)) {
         app_change_clock_face(dx < 0);
+    } else if (-dy >= SWIPE_MIN && LV_ABS(dy) > LV_ABS(dx)) {
+        open_countdown();
     } else if (!s_press_moved) {
         app_start_timer();
     }
@@ -702,13 +716,12 @@ void update_flower_face(lv_opa_t opa, lv_opa_t ring_opa, int second)
     }
 }
 
-void draw_christmas_backdrop(lv_event_t *e)
+// Christmas face scene (rim, snow, ornaments, pine forest); also the countdown screen's backdrop.
+void paint_christmas(lv_layer_t *ctx, const lv_area_t &box, lv_opa_t opa)
 {
-    lv_layer_t *ctx = lv_event_get_layer(e);
-    const lv_area_t box = obj_coords(s_christmas_backdrop);
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
-    rect.bg_opa = s_christmas_opa;
+    rect.bg_opa = opa;
     rect.radius = LV_RADIUS_CIRCLE;
     const auto circle = [&](int x, int y, int r, uint32_t color) {
         rect.bg_color = lv_color_hex(color);
@@ -718,7 +731,7 @@ void draw_christmas_backdrop(lv_event_t *e)
     };
     lv_draw_line_dsc_t stroke;
     lv_draw_line_dsc_init(&stroke);
-    stroke.opa = s_christmas_opa;
+    stroke.opa = opa;
     const auto line = [&](int x, int y, int end_x, int end_y, int width, uint32_t color) {
         stroke.width = width;
         stroke.color = lv_color_hex(color);
@@ -775,13 +788,18 @@ void draw_christmas_backdrop(lv_event_t *e)
     const lv_point_t center = {(lv_coord_t)(box.x1 + 240), (lv_coord_t)(box.y1 + 240)};
     lv_draw_arc_dsc_t ground;
     lv_draw_arc_dsc_init(&ground);
-    ground.opa = s_christmas_opa;
+    ground.opa = opa;
     ground.width = 2;
     ground.rounded = true;
     ground.color = lv_color_hex(0x648C7A);
     draw_arc(ctx, &ground, &center, 197, 63, 117);
     ground.color = lv_color_hex(0x36554A);
     draw_arc(ctx, &ground, &center, 204, 71, 109);
+}
+
+void draw_christmas_backdrop(lv_event_t *e)
+{
+    paint_christmas(lv_event_get_layer(e), obj_coords(s_christmas_backdrop), s_christmas_opa);
 }
 
 lv_point_t pt(float x, float y) { return {(lv_coord_t)lroundf(x), (lv_coord_t)lroundf(y)}; }
@@ -1062,9 +1080,13 @@ void draw_birthday_flag(lv_event_t *e)
     lv_draw_rect_dsc_t rect;
     lv_draw_rect_dsc_init(&rect);
     rect.bg_opa = flag.opa;
-    const auto fill = [&](lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h, lv_color_t color) {
-        const lv_area_t area = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y),
-                               (lv_coord_t)(box.x1 + x + w - 1), (lv_coord_t)(box.y1 + y + h - 1)};
+    // Coordinates are in flag units (scale 1 = 82 x 80 px box); edges are rounded after scaling so
+    // neighbouring columns stay seamless at any scale.
+    const float k = flag.scale;
+    const auto fill = [&](float x, float y, float w, float h, lv_color_t color) {
+        const lv_area_t area = {(lv_coord_t)(box.x1 + lroundf(x * k)), (lv_coord_t)(box.y1 + lroundf(y * k)),
+                               (lv_coord_t)(box.x1 + lroundf((x + w) * k) - 1),
+                               (lv_coord_t)(box.y1 + lroundf((y + h) * k) - 1)};
         rect.bg_color = color;
         lv_draw_rect(ctx, &rect, &area);
     };
@@ -1073,10 +1095,10 @@ void draw_birthday_flag(lv_event_t *e)
     fill(1, 2, 4, 4, lv_color_hex(0xEAC77B));
     const float phase = 6.28318530718f * flag.phase_ms / FLAG_WAVE_MS;
     // Dannebrog proportions: 12:4:21 across and 12:4:12 down, with the cloth fixed at the pole.
-    for (lv_coord_t x = 0; x < FLAG_CLOTH_WIDTH; x += 2) {
+    for (int x = 0; x < FLAG_CLOTH_WIDTH; x += 2) {
         const float u = (float)x / FLAG_CLOTH_WIDTH;
         const float fold = phase - 7.0f * u;
-        const lv_coord_t y = 10 + (lv_coord_t)lroundf(8.0f * u * sinf(fold));
+        const float y = 10.0f + 8.0f * u * sinf(fold);
         const lv_opa_t light = to_opa(0.5f + (0.25f + 0.22f * u) * cosf(fold));
         const lv_color_t white = lv_color_mix(lv_color_hex(0xFFF9F8), lv_color_hex(0xE5DCE1), light);
         if (x >= 24 && x < 32) {
@@ -1097,22 +1119,34 @@ void build_birthday_flags()
         lv_obj_remove_style_all(flag.obj);
         lv_obj_set_clickable(flag.obj, false);
         lv_obj_set_scrollable(flag.obj, false);
-        lv_obj_set_size(flag.obj, FLAG_BOX_WIDTH, 80);
-        lv_obj_set_pos(flag.obj, flag.x, 70);
+        lv_obj_set_size(flag.obj, (lv_coord_t)lroundf(FLAG_BOX_WIDTH * flag.scale),
+                        (lv_coord_t)lroundf(FLAG_BOX_HEIGHT * flag.scale));
+        flag.pos = {flag.x, flag.y};
+        lv_obj_set_pos(flag.obj, flag.x, flag.y);
         set_visible(flag.obj, false);
         lv_obj_add_event_cb(flag.obj, draw_birthday_flag, LV_EVENT_DRAW_MAIN, &flag);
     }
 }
 
-void update_birthday_flags(uint32_t now_ms, const struct tm &date)
+// The pair of flags shows on the idle clock on listed birthdays and on the day they were switched on
+// in settings (`flags_date`); while the screensaver is on, one bigger flag takes over and drifts
+// with the clock.
+void update_birthday_flags(uint32_t now_ms, const struct tm &date, uint32_t flags_date)
 {
-    const lv_opa_t opa = s_core->count == 0 && is_birthday(date)
-                            ? scale_opa(s_idle_opa, to_opa(1.0f - s_saver_level))
-                            : LV_OPA_TRANSP;
+    const bool today = is_birthday(date) || flags_date == ui_date_key(date);
+    const lv_opa_t base = today && s_core->count == 0 ? s_idle_opa : LV_OPA_TRANSP;
     for (auto &flag : s_flags) {
+        const lv_opa_t opa = scale_opa(base, to_opa(flag.saver ? s_saver_level : 1.0f - s_saver_level));
         set_visible(flag.obj, opa > LV_OPA_MIN);
         if (opa <= LV_OPA_MIN) {
             continue;
+        }
+        if (flag.saver) {
+            const lv_point_t pos = {(lv_coord_t)(flag.x + s_shift_x), (lv_coord_t)(flag.y + s_shift_y)};
+            if (pos.x != flag.pos.x || pos.y != flag.pos.y) {
+                flag.pos = pos;
+                lv_obj_set_pos(flag.obj, pos.x, pos.y);
+            }
         }
         const uint32_t phase = ((now_ms % FLAG_WAVE_MS / FLAG_FRAME_MS) * FLAG_FRAME_MS +
                                 flag.phase_offset_ms) % FLAG_WAVE_MS;
@@ -1250,17 +1284,24 @@ void build_idle()
     build_birthday_flags();
 }
 
-// Top of a font-clock label so the digits (not the line box) are centered on the idle clock.
+// Top of a label in `font` so its digits (not the line box) are centered on `cy`; `letter` is a
+// glyph the font contains.
+lv_coord_t digits_top(const lv_font_t *font, lv_coord_t cy, uint32_t letter = '0')
+{
+    lv_font_glyph_dsc_t g;
+    if (!lv_font_get_glyph_dsc(font, &g, letter, '\0')) {
+        return (lv_coord_t)(cy - font->line_height / 2);
+    }
+    const lv_coord_t baseline = (lv_coord_t)(font->line_height - font->base_line); // from the label top
+    return (lv_coord_t)(cy - (baseline - g.ofs_y - g.box_h / 2));
+}
+
+// Top of a font-clock label so the digits are centered on the idle clock.
 lv_coord_t font_clock_top(const lv_font_t *font)
 {
     brush_layout_t l;
     brush_layout(0, &l);
-    lv_font_glyph_dsc_t g;
-    if (!lv_font_get_glyph_dsc(font, &g, '0', '\0')) {
-        return (lv_coord_t)(l.clock_cy - font->line_height / 2);
-    }
-    const lv_coord_t baseline = (lv_coord_t)(font->line_height - font->base_line); // from the label top
-    return (lv_coord_t)(l.clock_cy - (baseline - g.ofs_y - g.box_h / 2));
+    return digits_top(font, l.clock_cy);
 }
 
 float update_screensaver_level(uint32_t now_ms, bool screensaver)
@@ -1309,6 +1350,8 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second, b
         shift_x = (lv_coord_t)lroundf(radius * sinf(angle));
         shift_y = (lv_coord_t)lroundf(radius * cosf(angle));
     }
+    s_shift_x = shift_x;
+    s_shift_y = shift_y;
     const lv_color_t accent = screensaver_color(saver_elapsed);
 
     brush_geom_t g;
@@ -1979,6 +2022,7 @@ void refresh_settings()
                      : s_set_values.clock_face == CLOCK_FACE_SYNTHWAVE ? "Synthwave" : t->classic;
     lv_label_set_text_fmt(s_face_label, "%s: %s", t->clock_face, face);
     lv_label_set_text_fmt(s_font_label, "Aa %s", s_set_values.custom_font ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
+    lv_label_set_text(s_flags_label, s_set_values.flags_date == s_set_today ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
     lv_label_set_text_fmt(s_duration_label, "%s %d:%02d", LV_SYMBOL_BELL, s_set_values.duration_s / 60,
                           s_set_values.duration_s % 60);
     lv_label_set_text(s_ok_label, t->ok);
@@ -1986,7 +2030,7 @@ void refresh_settings()
 
 enum SettingsAction : intptr_t {
     HOUR_UP, HOUR_DOWN, MIN_UP, MIN_DOWN, TOGGLE_MODE, TOGGLE_SOUND, TOGGLE_BRIGHTNESS, TOGGLE_FACE, TOGGLE_FONT,
-    TOGGLE_DURATION, TOGGLE_LANG, DONE,
+    TOGGLE_FLAGS, TOGGLE_DURATION, TOGGLE_LANG, DONE,
 };
 
 void settings_event_cb(lv_event_t *e)
@@ -2004,6 +2048,7 @@ void settings_event_cb(lv_event_t *e)
         app_preview_brightness(s_set_values.brightness);
         break;
     case TOGGLE_FONT: s_set_values.custom_font = !s_set_values.custom_font; break;
+    case TOGGLE_FLAGS: s_set_values.flags_date = s_set_values.flags_date == s_set_today ? 0 : s_set_today; break;
     case TOGGLE_DURATION: {
         constexpr size_t n = sizeof(kDurations) / sizeof(kDurations[0]);
         size_t i = 0;
@@ -2094,16 +2139,41 @@ void build_settings()
     s_bright_label = make_label(bright, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_bright_label);
 
-    lv_obj_t *face = make_button(s_settings_scr, 240, 44, COLOR_SURFACE, TOGGLE_FACE, false);
-    lv_obj_set_pos(face, 60, 338);
+    // Face | custom fonts ("Aa ✓") | birthday flags (small Dannebrog + ✓). The widest face label,
+    // "Urskive: Flower Power", is 226 px; the row spans the 386 px chord at its bottom edge.
+    lv_obj_t *face = make_button(s_settings_scr, 236, 44, COLOR_SURFACE, TOGGLE_FACE, false);
+    lv_obj_set_pos(face, 47, 338);
     s_face_label = make_label(face, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_face_label);
 
-    // Custom face fonts on/off ("Aa ✓" / "Aa ✕").
-    lv_obj_t *font = make_button(s_settings_scr, 112, 44, COLOR_SURFACE, TOGGLE_FONT, false);
-    lv_obj_set_pos(font, 308, 338);
+    lv_obj_t *font = make_button(s_settings_scr, 69, 44, COLOR_SURFACE, TOGGLE_FONT, false);
+    lv_obj_set_pos(font, 289, 338);
     s_font_label = make_label(font, &tb_font_20, COLOR_TEXT, "");
     lv_obj_center(s_font_label);
+
+    lv_obj_t *flags = make_button(s_settings_scr, 69, 44, COLOR_SURFACE, TOGGLE_FLAGS, false);
+    lv_obj_set_pos(flags, 364, 338);
+    lv_obj_t *dannebrog = lv_obj_create(flags);
+    lv_obj_remove_style_all(dannebrog);
+    lv_obj_set_clickable(dannebrog, false);
+    lv_obj_set_size(dannebrog, 25, 18);
+    lv_obj_set_pos(dannebrog, 9, 13);
+    lv_obj_set_style_bg_opa(dannebrog, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(dannebrog, lv_color_hex(0xC8102E), 0);
+    const struct {
+        lv_coord_t x, y, w, h;
+    } cross[] = {{8, 0, 3, 18}, {0, 7, 25, 3}};
+    for (const auto &bar : cross) {
+        lv_obj_t *white = lv_obj_create(dannebrog);
+        lv_obj_remove_style_all(white);
+        lv_obj_set_clickable(white, false);
+        lv_obj_set_pos(white, bar.x, bar.y);
+        lv_obj_set_size(white, bar.w, bar.h);
+        lv_obj_set_style_bg_opa(white, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(white, lv_color_white(), 0);
+    }
+    s_flags_label = make_label(flags, &tb_font_20, COLOR_TEXT, "");
+    lv_obj_align(s_flags_label, LV_ALIGN_LEFT_MID, 39, 0);
 
     // Brushing time | language | done; narrower buttons so the row fits inside the round screen.
     lv_obj_t *duration = make_button(s_settings_scr, 90, 44, COLOR_SURFACE, TOGGLE_DURATION, false);
@@ -2120,6 +2190,292 @@ void build_settings()
     lv_obj_set_pos(done, 291, 390);
     s_ok_label = make_label(done, &tb_font_20, 0xFFFFFF, "");
     lv_obj_center(s_ok_label);
+}
+
+// ---- Christmas countdown screen (swipe up from the idle clock, swipe down to return) -------
+// Mirrors renderCountdown() in preview/sim.js.
+
+constexpr uint32_t COUNTDOWN_IDLE_MS = 5 * 60 * 1000; // back to the clock after 5 min without touch
+constexpr uint32_t COUNTDOWN_SLIDE_MS = 300;
+
+lv_obj_t *s_countdown_scr = nullptr;
+lv_obj_t *s_cd_backdrop = nullptr;
+lv_obj_t *s_cd_number = nullptr; // custom font
+lv_obj_t *s_cd_digits = nullptr; // segment digits when custom fonts are off
+lv_obj_t *s_cd_text = nullptr;
+uint32_t s_cd_touch_ms = 0;
+bool s_cd_open = false; // set when the slide starts; lv_screen_active() only follows a tick later
+UiSettings s_ui_settings = {};
+struct tm s_last_tm = {};
+struct {
+    brush_xmas_phase_t phase;
+    int days;
+    brush_lang_t lang;
+    bool custom_font;
+    bool valid;
+} s_cd_shown = {};
+
+// Five-pointed gold star in place of the number from 24 to 26 December.
+void paint_star(lv_layer_t *ctx, const lv_area_t &box, lv_coord_t cx, lv_coord_t cy, float r)
+{
+    lv_point_t pts[12];
+    pts[0] = {(lv_coord_t)(box.x1 + cx), (lv_coord_t)(box.y1 + cy)}; // fan center
+    for (int i = 0; i < 10; i++) {
+        const float a = 3.14159265f * i / 5 - 3.14159265f / 2;
+        const float radius = i % 2 ? r * 0.42f : r;
+        pts[i + 1] = {(lv_coord_t)(box.x1 + cx + lroundf(radius * cosf(a))),
+                      (lv_coord_t)(box.y1 + cy + lroundf(radius * sinf(a)))};
+    }
+    pts[11] = pts[1];
+    lv_draw_rect_dsc_t fill;
+    lv_draw_rect_dsc_init(&fill);
+    fill.bg_color = lv_color_hex(CHRISTMAS_GOLD);
+    fill.bg_opa = LV_OPA_COVER;
+    draw_polygon(ctx, &fill, pts, 12);
+}
+
+// Twinkling lights: each bulb fades between full and ~35 % brightness on its own slow cycle. Levels
+// are quantized so a bulb is only redrawn (an 11 x 11 px area) when its level changes.
+constexpr int BULB_COUNT = 16;
+constexpr int TWINKLE_STEPS = 12;
+constexpr uint32_t kBulbColors[] = {0xE5484D, 0xFFD58D, 0x5BBF7A, 0x6CB6FF};
+
+struct Bulb {
+    lv_coord_t x, y;
+    uint32_t color;
+    uint32_t period_ms, phase_ms;
+    uint8_t level; // 0 (dim) .. TWINKLE_STEPS (bright)
+};
+Bulb s_bulbs[BULB_COUNT];
+
+void init_bulbs()
+{
+    int n = 0;
+    for (int start : {200, 290}) { // two strings along the upper rim
+        for (int i = 0; i < BULB_COUNT / 2; i++, n++) {
+            const float a = (start + 3 + i * 6.3f) * 3.14159265f / 180.0f;
+            Bulb &b = s_bulbs[n];
+            b.x = (lv_coord_t)(240 + lroundf(203 * cosf(a)));
+            b.y = (lv_coord_t)(240 + lroundf(203 * sinf(a)));
+            b.color = kBulbColors[(i + start / 10) % 4];
+            b.period_ms = 3600 + (n % 3) * 700;
+            b.phase_ms = (uint32_t)(n * 1663) % b.period_ms;
+            b.level = TWINKLE_STEPS;
+        }
+    }
+}
+
+uint8_t bulb_level(const Bulb &b, uint32_t now_ms)
+{
+    const float p = (float)((now_ms + b.phase_ms) % b.period_ms) / b.period_ms;
+    return (uint8_t)lroundf((0.5f + 0.5f * cosf(6.28318530718f * p)) * TWINKLE_STEPS);
+}
+
+void update_twinkle(uint32_t now_ms)
+{
+    const lv_area_t box = obj_coords(s_cd_backdrop);
+    for (Bulb &b : s_bulbs) {
+        const uint8_t level = bulb_level(b, now_ms);
+        if (level != b.level) {
+            b.level = level;
+            const lv_area_t area = {(lv_coord_t)(box.x1 + b.x - 5), (lv_coord_t)(box.y1 + b.y - 5),
+                                    (lv_coord_t)(box.x1 + b.x + 5), (lv_coord_t)(box.y1 + b.y + 5)};
+            lv_obj_invalidate_area(s_cd_backdrop, &area);
+        }
+    }
+}
+
+// Extra decorations of the countdown screen, on top of the Christmas face scene: strings of lights
+// along the upper rim, snowflakes, a star on the middle tree and presents. Mirrors countdownExtras()
+// in preview/sim.js.
+void paint_countdown_extras(lv_layer_t *ctx, const lv_area_t &box)
+{
+    lv_draw_rect_dsc_t rect;
+    lv_draw_rect_dsc_init(&rect);
+    const auto fill = [&](int x, int y, int w, int h, int radius, uint32_t color) {
+        rect.radius = radius;
+        rect.bg_color = lv_color_hex(color);
+        const lv_area_t area = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y),
+                                (lv_coord_t)(box.x1 + x + w - 1), (lv_coord_t)(box.y1 + y + h - 1)};
+        lv_draw_rect(ctx, &rect, &area);
+    };
+    const auto circle = [&](int x, int y, int r, uint32_t color) {
+        fill(x - r, y - r, 2 * r + 1, 2 * r + 1, LV_RADIUS_CIRCLE, color);
+    };
+    lv_draw_line_dsc_t stroke;
+    lv_draw_line_dsc_init(&stroke);
+    stroke.round_start = stroke.round_end = 1;
+    const auto line = [&](int x, int y, int end_x, int end_y, int width, uint32_t color) {
+        stroke.width = width;
+        stroke.color = lv_color_hex(color);
+        const lv_point_t a = {(lv_coord_t)(box.x1 + x), (lv_coord_t)(box.y1 + y)};
+        const lv_point_t b = {(lv_coord_t)(box.x1 + end_x), (lv_coord_t)(box.y1 + end_y)};
+        draw_line(ctx, &stroke, &a, &b);
+    };
+
+    // Strings of lights: a thin wire along the rim with bulbs hanging just inside it.
+    const lv_point_t center = {(lv_coord_t)(box.x1 + 240), (lv_coord_t)(box.y1 + 240)};
+    lv_draw_arc_dsc_t wire;
+    lv_draw_arc_dsc_init(&wire);
+    wire.width = 1;
+    wire.color = lv_color_hex(0xA08354);
+    for (int start : {200, 290}) {
+        draw_arc(ctx, &wire, &center, 211, start, start + 50);
+    }
+    for (const Bulb &b : s_bulbs) {
+        const lv_opa_t lit = (lv_opa_t)(90 + 165 * b.level / TWINKLE_STEPS); // 35 % .. 100 %
+        const lv_color_t color = lv_color_mix(lv_color_hex(b.color), lv_color_hex(0x112A25), lit);
+        rect.radius = LV_RADIUS_CIRCLE;
+        rect.bg_color = color;
+        const lv_area_t bulb = {(lv_coord_t)(box.x1 + b.x - 4), (lv_coord_t)(box.y1 + b.y - 4),
+                                (lv_coord_t)(box.x1 + b.x + 4), (lv_coord_t)(box.y1 + b.y + 4)};
+        lv_draw_rect(ctx, &rect, &bulb);
+        rect.bg_opa = (lv_opa_t)(255 * b.level / TWINKLE_STEPS); // highlight fades with the bulb
+        circle(b.x - 1, b.y - 1, 1, CHRISTMAS_SNOW);
+        rect.bg_opa = LV_OPA_COVER;
+    }
+
+    // Snowflakes: three crossing strokes with small tips.
+    constexpr int flakes[][3] = {{78, 258, 12}, {402, 258, 12}, {108, 200, 7}, {372, 200, 7}};
+    for (const auto &f : flakes) {
+        for (int k = 0; k < 3; k++) {
+            const float a = k * 3.14159265f / 3 + 3.14159265f / 2;
+            const int dx = (int)lroundf(f[2] * cosf(a)), dy = (int)lroundf(f[2] * sinf(a));
+            line(f[0] - dx, f[1] - dy, f[0] + dx, f[1] + dy, 2, 0xCFE3DA);
+        }
+        circle(f[0], f[1], 2, CHRISTMAS_SNOW);
+    }
+
+    // Star on top of the middle tree.
+    paint_star(ctx, box, 240, 364, 9.0f);
+
+    // Presents beside the forest: box, ribbon cross and a bow.
+    const struct {
+        int x, y, w, h;
+        uint32_t color;
+    } gifts[] = {{136, 405, 20, 16, 0xC0392B}, {324, 408, 17, 13, 0x2E8B57}};
+    for (const auto &g : gifts) {
+        fill(g.x, g.y, g.w, g.h, 2, g.color);
+        fill(g.x + g.w / 2 - 1, g.y, 3, g.h, 0, CHRISTMAS_GOLD);
+        fill(g.x, g.y + g.h / 2 - 1, g.w, 3, 0, CHRISTMAS_GOLD);
+        circle(g.x + g.w / 2 - 3, g.y - 2, 3, CHRISTMAS_GOLD);
+        circle(g.x + g.w / 2 + 3, g.y - 2, 3, CHRISTMAS_GOLD);
+    }
+}
+
+void draw_countdown_backdrop(lv_event_t *e)
+{
+    lv_layer_t *ctx = lv_event_get_layer(e);
+    const lv_area_t box = obj_coords(s_cd_backdrop);
+    paint_christmas(ctx, box, LV_OPA_COVER);
+    paint_countdown_extras(ctx, box);
+    if (s_cd_shown.valid && s_cd_shown.phase == BRUSH_XMAS_MERRY) {
+        brush_layout_t l;
+        brush_layout(0, &l);
+        paint_star(ctx, box, 240, l.clock_cy, 62.0f);
+    }
+}
+
+void update_countdown(const struct tm &date, const UiSettings &settings)
+{
+    int days = 0;
+    const brush_xmas_phase_t phase = brush_xmas_countdown(date.tm_year + 1900, date.tm_mon, date.tm_mday, &days);
+    if (s_cd_shown.valid && phase == s_cd_shown.phase && days == s_cd_shown.days &&
+        settings.lang == s_cd_shown.lang && settings.custom_font == s_cd_shown.custom_font) {
+        return;
+    }
+    const bool star_changed = !s_cd_shown.valid || (phase == BRUSH_XMAS_MERRY) != (s_cd_shown.phase == BRUSH_XMAS_MERRY);
+    s_cd_shown = {phase, days, settings.lang, settings.custom_font, true};
+
+    brush_layout_t l;
+    brush_layout(0, &l);
+    const bool merry = phase == BRUSH_XMAS_MERRY;
+    // The lone "1" on the last day is narrow, so it is drawn 1.35x bigger.
+    const bool big_one = !merry && days == 1;
+    char number[8];
+    snprintf(number, sizeof(number), "%d", days);
+    set_visible(s_cd_number, !merry && settings.custom_font);
+    set_visible(s_cd_digits, !merry && !settings.custom_font);
+    const lv_font_t *number_font = big_one ? &tb_font_berkshire_one : &tb_font_berkshire_clock;
+    lv_obj_set_style_text_font(s_cd_number, number_font, 0);
+    lv_label_set_text(s_cd_number, number);
+    lv_obj_align(s_cd_number, LV_ALIGN_TOP_MID, 0, digits_top(number_font, l.clock_cy, big_one ? '1' : '0'));
+    const lv_coord_t seg_h = big_one ? (lv_coord_t)(l.clock_h * 135 / 100) : l.clock_h;
+    seg_set_height(s_cd_digits, seg_h);
+    seg_set_text(s_cd_digits, number);
+    lv_obj_align(s_cd_digits, LV_ALIGN_TOP_MID, 0, (lv_coord_t)(l.clock_cy - seg_h / 2));
+
+    lv_obj_set_style_text_font(s_cd_text, settings.custom_font ? &tb_font_berkshire_28 : &tb_font_28, 0);
+    lv_label_set_text(s_cd_text, brush_xmas_text(settings.lang, phase, days));
+    lv_obj_align(s_cd_text, LV_ALIGN_TOP_MID, 0, (lv_coord_t)(l.clock_cy + l.clock_h / 2 + DATE_GAP));
+    if (star_changed) {
+        lv_obj_invalidate(s_cd_backdrop);
+    }
+}
+
+void close_countdown()
+{
+    if (s_cd_open) {
+        s_cd_open = false;
+        lv_screen_load_anim(s_main_scr, LV_SCREEN_LOAD_ANIM_MOVE_BOTTOM, COUNTDOWN_SLIDE_MS, 0, false);
+    }
+}
+
+void countdown_event_cb(lv_event_t *e)
+{
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+        s_press_start = p;
+        s_cd_touch_ms = lv_tick_get();
+        return;
+    }
+    const lv_coord_t dx = p.x - s_press_start.x, dy = p.y - s_press_start.y;
+    s_cd_touch_ms = lv_tick_get();
+    if (dy >= SWIPE_MIN && LV_ABS(dy) > LV_ABS(dx)) {
+        close_countdown();
+    }
+}
+
+void open_countdown()
+{
+    if (s_cd_open || lv_screen_active() != s_main_scr) {
+        return;
+    }
+    s_cd_open = true;
+    s_cd_touch_ms = lv_tick_get();
+    update_countdown(s_last_tm, s_ui_settings);
+    update_twinkle(lv_tick_get());
+    lv_screen_load_anim(s_countdown_scr, LV_SCREEN_LOAD_ANIM_MOVE_TOP, COUNTDOWN_SLIDE_MS, 0, false);
+}
+
+void build_countdown()
+{
+    s_countdown_scr = lv_obj_create(nullptr);
+    lv_obj_remove_style_all(s_countdown_scr);
+    lv_obj_set_style_bg_color(s_countdown_scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_countdown_scr, LV_OPA_COVER, 0);
+    lv_obj_set_scrollable(s_countdown_scr, false);
+    lv_obj_set_clickable(s_countdown_scr, true);
+    lv_obj_add_event_cb(s_countdown_scr, countdown_event_cb, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(s_countdown_scr, countdown_event_cb, LV_EVENT_RELEASED, nullptr);
+
+    s_cd_backdrop = lv_obj_create(s_countdown_scr);
+    lv_obj_remove_style_all(s_cd_backdrop);
+    lv_obj_set_clickable(s_cd_backdrop, false);
+    lv_obj_set_scrollable(s_cd_backdrop, false);
+    lv_obj_set_size(s_cd_backdrop, LCD_WIDTH, LCD_HEIGHT);
+    lv_obj_add_event_cb(s_cd_backdrop, draw_countdown_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
+    init_bulbs();
+
+    s_cd_number = make_label(s_countdown_scr, &tb_font_berkshire_clock, CHRISTMAS_SNOW, "");
+    s_cd_digits = seg_create(s_countdown_scr, 110);
+    seg_set_color(s_cd_digits, lv_color_hex(CHRISTMAS_SNOW));
+    s_cd_text = make_label(s_countdown_scr, &tb_font_berkshire_28, CHRISTMAS_GOLD, "");
 }
 
 } // namespace
@@ -2151,11 +2507,23 @@ void ui_init(brush_core_t *core, uint32_t now_ms)
     style_add_button();
     on_layout_changed();
     build_settings();
+    build_countdown();
 }
 
 void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_second,
                const UiSettings &settings, bool screensaver)
 {
+    s_ui_settings = settings;
+    s_last_tm = *local_time;
+    if (s_cd_open) {
+        update_countdown(*local_time, settings);
+        update_twinkle(now_ms);
+        // A timer started by an Oral-B brush, or no touch for a while, returns to the clock.
+        if (s_core->count != 0 || screensaver || lv_tick_elaps(s_cd_touch_ms) >= COUNTDOWN_IDLE_MS) {
+            close_countdown();
+        }
+        return;
+    }
     if (lv_screen_active() != s_main_scr) {
         return;
     }
@@ -2186,7 +2554,7 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
     apply_add(now_ms);
     apply_idle(now_ms, screensaver, settings.clock_face, LV_MIN(local_time->tm_sec, FLOWER_MARKS - 1),
                settings.custom_font);
-    update_birthday_flags(now_ms, *local_time);
+    update_birthday_flags(now_ms, *local_time, settings.flags_date);
 
     char clock[8];
     snprintf(clock, sizeof(clock), "%02d:%02d", local_time->tm_hour, local_time->tm_min);
@@ -2240,6 +2608,7 @@ void ui_open_settings(const struct tm *local_time, const UiSettings &settings)
 {
     s_set_hour = local_time->tm_hour;
     s_set_minute = local_time->tm_min;
+    s_set_today = ui_date_key(*local_time);
     s_time_changed = false;
     s_set_values = settings;
     refresh_settings();

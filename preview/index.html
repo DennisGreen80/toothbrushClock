@@ -6,6 +6,7 @@
 <style>
   @font-face { font-family: 'Berkshire Swash'; src: url(fonts/berkshire-swash.woff2) format('woff2'); }
   @font-face { font-family: 'Fredoka'; src: url(fonts/fredoka.woff2) format('woff2'); font-weight: 600; }
+  @font-face { font-family: 'Cinzel Decorative'; src: url(fonts/cinzel-decorative.woff2) format('woff2'); font-weight: 700; }
   :root { color-scheme: dark; }
   body { margin: 0; min-height: 100vh; display: flex; flex-wrap: wrap; gap: 40px; align-items: center; justify-content: center;
          background: #0d0d0f; color: #c8c8cc; font: 14px/1.5 'Segoe UI', Helvetica, Arial, sans-serif; }
@@ -29,6 +30,7 @@
   <ul>
     <li><b>Tap</b> the clock to start a timer; <b>hold</b> it or tap the <b>gear</b> to open settings</li>
     <li><b>Swipe</b> left/right on the clock to change the clock face</li>
+    <li><b>Swipe up</b> on the clock for the Christmas countdown, <b>down</b> to go back (returns by itself after 5 min)</li>
     <li><b>Tap</b> a ring to pause/resume (or dismiss when done)</li>
     <li><b>Hold</b> a ring to cancel it (its smiley shows for 6 s)</li>
     <li><b>+</b> adds another timer (up to 4)</li>
@@ -46,6 +48,7 @@
   <label>Birthday flag layout
     <select id="birthday-layout"><option value="same">Same direction</option><option value="mirrored">Mirrored</option></select>
   </label>
+  <label>Date (empty = today) <input type="date" id="sim-date"></label>
   <label>Language
     <select id="lang"><option value="da" selected>Dansk</option><option value="en">English</option></select>
   </label>
@@ -58,7 +61,7 @@
 </aside>
 <script src="sim.js"></script>
 <script>
-  const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, renderSVG, SETTINGS_BUTTONS, PULSE, LANGS, CLOCK_FACES, SETTINGS_GEAR } = window.BrushSim;
+  const { BrushCore, BrushScene, OralbTracker, parseOralb, oralbAdvert, ORALB, layout, renderSVG, SETTINGS_BUTTONS, PULSE, LANGS, CLOCK_FACES, SETTINGS_GEAR, dateKey } = window.BrushSim;
   const LONG_PRESS_MS = 400; // mirrors LONG_PRESS_MS in src/main.cpp
   const BEZEL = 20;
   const ADV_INTERVAL_MS = 250; // simulated time between advertisements
@@ -66,10 +69,11 @@
 
   const SCREENSAVER_AFTER_MS = 15 * 60 * 1000;
   const SCREENSAVER_TRANSITION_MS = 1400;
-  let core, scene, tracker, brushes, simNow, lastReal, screen = 'main';
+  const COUNTDOWN_IDLE_MS = 5 * 60 * 1000, COUNTDOWN_SLIDE_MS = 300; // mirrors src/ui/ui.cpp
+  let core, scene, tracker, brushes, simNow, lastReal, screen = 'main', slide = null;
   let lastActivity = 0, saverLevel = 0, saverFrom = 0, saverTarget = false, saverStartReal = 0, saverSinceReal = 0;
   let forceSaver = false;
-  let prefs = { countUp: false, sound: true, lang: 'da', clockFace: 'classic', brightness: 100, customFont: true, duration: 120 };
+  let prefs = { countUp: false, sound: true, lang: 'da', clockFace: 'classic', brightness: 100, customFont: true, duration: 120, flagsDate: 0 };
   let settings = null;
   const device = document.getElementById('device');
   const logEl = document.getElementById('log');
@@ -77,7 +81,7 @@
   const exitSaverButton = document.getElementById('exit-saver');
 
   function reset() {
-    core = new BrushCore(); core.setDuration(prefs.duration * 1000); simNow = 0; lastReal = performance.now(); screen = 'main'; logEl.textContent = '';
+    core = new BrushCore(); core.setDuration(prefs.duration * 1000); simNow = 0; lastReal = performance.now(); screen = 'main'; slide = null; logEl.textContent = '';
     lastActivity = 0; saverLevel = 0; saverFrom = 0; saverTarget = false; saverStartReal = 0; saverSinceReal = 0;
     forceSaver = false; saverCheckbox.checked = false; exitSaverButton.disabled = true;
     document.getElementById('birthday').checked = false;
@@ -190,11 +194,18 @@
     const saverEase = saverProgress * saverProgress * (3 - 2 * saverProgress);
     saverLevel = saverFrom + ((saverTarget ? 1 : 0) - saverFrom) * saverEase;
     // Timer logic runs on (sped-up) simulated time; animations always run in real time.
-    const date = new Date();
+    // Back to the clock from the countdown when a timer starts or after 5 min without touch (ui_update).
+    if (screen === 'countdown' && (core.count > 0 || saver || simNow - lastActivity >= COUNTDOWN_IDLE_MS)) {
+      slideTo('main', false);
+    }
+    const date = simDate();
     const birthdayDates = document.getElementById('birthday').checked ? [[date.getMonth() + 1, date.getDate()]] : [];
     const mirrorBirthdayFlags = document.getElementById('birthday-layout').value === 'mirrored';
+    const slideState = slide && { from: slide.from, up: slide.up, progress: (real - slide.startReal) / COUNTDOWN_SLIDE_MS };
+    if (slideState && slideState.progress >= 1) slide = null;
     device.innerHTML = renderSVG({ screen, core, scene, now: simNow, animNow: real, date, birthdayDates,
-      mirrorBirthdayFlags, countUp: prefs.countUp, lang: prefs.lang, clockFace: prefs.clockFace, customFont: prefs.customFont, settings, saverLevel,
+      mirrorBirthdayFlags, countUp: prefs.countUp, lang: prefs.lang, clockFace: prefs.clockFace, customFont: prefs.customFont,
+      flagsDate: prefs.flagsDate, settings, saverLevel, slide: slideState,
       saverElapsedMs: Math.max(0, real - saverSinceReal) });
     // Approximates the backlight level (live while choosing it in settings, like the device).
     const pct = (settings && screen === 'settings' ? settings : prefs).brightness;
@@ -203,6 +214,7 @@
   }
 
   function hit(x, y) {
+    if (screen === 'countdown') return { kind: 'countdown' };
     if (screen === 'settings') {
       const b = SETTINGS_BUTTONS.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
       return b ? { kind: 'setting', id: b.id } : null;
@@ -222,7 +234,7 @@
   function act(target, long) {
     if (!target) return;
     const fadeIn = () => device.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
-    const openSettings = () => { const d = new Date(); settings = { hour: d.getHours(), minute: d.getMinutes(), ...prefs }; screen = 'settings'; fadeIn(); };
+    const openSettings = () => { const d = simDate(); settings = { hour: d.getHours(), minute: d.getMinutes(), ...prefs, today: dateKey(d) }; screen = 'settings'; fadeIn(); };
     switch (target.kind) {
       case 'gear':
         if (!long) openSettings();
@@ -248,11 +260,12 @@
           mode: () => s.countUp = !s.countUp, sound: () => s.sound = !s.sound,
           bright: () => s.brightness = s.brightness >= 100 ? 25 : s.brightness + 25,
           font: () => s.customFont = !s.customFont,
+          flags: () => s.flagsDate = s.flagsDate === s.today ? 0 : s.today,
           duration: () => { const d = [120, 100, 60, 40]; s.duration = d[(d.indexOf(s.duration) + 1) % d.length]; },
           face: () => s.clockFace = CLOCK_FACES[(CLOCK_FACES.indexOf(s.clockFace) + 1) % CLOCK_FACES.length],
           lang: () => s.lang = LANGS[(LANGS.indexOf(s.lang) + 1) % LANGS.length],
           done: () => {
-            prefs = { countUp: s.countUp, sound: s.sound, lang: s.lang, clockFace: s.clockFace, brightness: s.brightness, customFont: s.customFont, duration: s.duration };
+            prefs = { countUp: s.countUp, sound: s.sound, lang: s.lang, clockFace: s.clockFace, brightness: s.brightness, customFont: s.customFont, duration: s.duration, flagsDate: s.flagsDate };
             core.setDuration(s.duration * 1000);
             document.getElementById('lang').value = s.lang;
             document.getElementById('clock-face').value = s.clockFace;
@@ -302,6 +315,10 @@
       const i = CLOCK_FACES.indexOf(prefs.clockFace);
       prefs.clockFace = CLOCK_FACES[(i + (dx < 0 ? 1 : CLOCK_FACES.length - 1)) % CLOCK_FACES.length];
       document.getElementById('clock-face').value = prefs.clockFace;
+    } else if (!longFired && pressTarget && pressTarget.kind === 'idle' && -dy >= SWIPE_MIN && Math.abs(dy) > Math.abs(dx)) {
+      slideTo('countdown', true);
+    } else if (pressTarget && pressTarget.kind === 'countdown') {
+      if (dy >= SWIPE_MIN && Math.abs(dy) > Math.abs(dx)) slideTo('main', false);
     } else if (!longFired && !pressMoved) {
       act(pressTarget, false);
     }
@@ -310,6 +327,22 @@
   });
   device.addEventListener('pointerleave', () => { clearTimeout(pressTimer); pressTarget = null; pressStart = null; });
   document.getElementById('reset').onclick = reset;
+  // Today, or the date chosen in the "Date" field (keeping the current time of day).
+  function simDate() {
+    const date = new Date();
+    const override = document.getElementById('sim-date').value;
+    if (override) {
+      const [y, m, d] = override.split('-').map(Number);
+      date.setFullYear(y, m - 1, d);
+    }
+    return date;
+  }
+  // Mirrors open_countdown() / close_countdown(): LV_SCREEN_LOAD_ANIM_MOVE_TOP / _BOTTOM.
+  function slideTo(next, up) {
+    if (screen === next || slide) return;
+    slide = { from: screen, up, startReal: performance.now() };
+    screen = next;
+  }
   function exitScreensaver() {
     forceSaver = false;
     saverCheckbox.checked = false;

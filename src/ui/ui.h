@@ -27,7 +27,14 @@ struct UiSettings {
     uint8_t brightness; // percent of the normal backlight levels: 25, 50, 75 or 100
     bool custom_font;   // Christmas faces use their own font for the clock and date
     uint16_t duration_s; // brushing time: 120, 100, 60 or 40 seconds
+    uint32_t flags_date; // YYYYMMDD the birthday flags were switched on for (only that day), 0 = off
 };
+
+// Calendar date as YYYYMMDD, as stored in UiSettings::flags_date.
+inline uint32_t ui_date_key(const struct tm &t)
+{
+    return (uint32_t)(t.tm_year + 1900) * 10000u + (uint32_t)(t.tm_mon + 1) * 100u + (uint32_t)t.tm_mday;
+}
 
 void ui_init(brush_core_t *core, uint32_t now_ms);
 // Call from loop(): every frame while ui_animating(), otherwise every ~50 ms.

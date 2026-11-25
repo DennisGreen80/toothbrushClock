@@ -12,7 +12,8 @@ const baseDir = path.join(__dirname, '..', 'docs', 'screens');
 const fontFace = (family, file, weight) =>
   `@font-face{font-family:'${family}';font-weight:${weight};src:url(data:font/woff2;base64,` +
   `${fs.readFileSync(path.join(__dirname, 'fonts', file)).toString('base64')}) format('woff2');}`;
-const fontCss = fontFace('Berkshire Swash', 'berkshire-swash.woff2', 400) + fontFace('Fredoka', 'fredoka.woff2', 600);
+const fontCss = fontFace('Berkshire Swash', 'berkshire-swash.woff2', 400) + fontFace('Fredoka', 'fredoka.woff2', 600) +
+  fontFace('Cinzel Decorative', 'cinzel-decorative.woff2', 700);
 
 const date = new Date(2026, 10, 23, 7, 42, 18, 400);
 const NOW = 1000000;
@@ -52,6 +53,8 @@ const scenes = lang => ({
   '11-oralb-mixed': { screen: 'main', core: coreWith([{ elapsed: 64, oralb: {} }, { elapsed: 41 }, { elapsed: 12, oralb: { hard: true } }]) },
   '12-screensaver': { screen: 'main', core: new BrushCore(), saverLevel: 1, saverElapsedMs: 22000 },
   '13-birthday': { screen: 'main', core: new BrushCore(), birthdayDates: [[11, 23]] },
+  '13b-birthday-screensaver': { screen: 'main', core: new BrushCore(), birthdayDates: [[11, 23]], saverLevel: 1,
+    saverElapsedMs: 22000 },
   '14-synthwave': { screen: 'main', core: new BrushCore(), clockFace: 'synthwave' },
   '15-flower-power': { screen: 'main', core: new BrushCore(), clockFace: 'flower-power' },
   '16-christmas': { screen: 'main', core: new BrushCore(), clockFace: 'christmas',
@@ -63,6 +66,9 @@ const scenes = lang => ({
     date: new Date(2026, 11, 24, 7, 42, 18, 400) },
   '20-candy-cane': { screen: 'main', core: new BrushCore(), clockFace: 'candy',
     date: new Date(2026, 11, 24, 7, 42, 18, 400) },
+  '21-countdown-december': { screen: 'countdown' },
+  '22-countdown-christmas': { screen: 'countdown', date: new Date(2026, 11, 23, 7, 42) },
+  '23-countdown-merry': { screen: 'countdown', date: new Date(2026, 11, 24, 7, 42) },
 });
 
 // ---- Transition filmstrips -------------------------------------------------------------------
