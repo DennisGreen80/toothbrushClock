@@ -146,7 +146,8 @@ lv_obj_t *seg_create(lv_obj_t *parent, lv_coord_t digit_height)
 {
     lv_obj_t *obj = lv_obj_create(parent);
     lv_obj_remove_style_all(obj);
-    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(obj, false);
+    lv_obj_set_scrollable(obj, false);
 
     SegData *d = (SegData *)lv_malloc(sizeof(SegData));
     memset(d, 0, sizeof(*d));

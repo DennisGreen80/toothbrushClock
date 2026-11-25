@@ -261,16 +261,7 @@ lv_opa_t to_opa(float o)
 
 lv_opa_t scale_opa(lv_opa_t a, lv_opa_t b) { return (lv_opa_t)((uint16_t)a * b / 255); }
 
-void set_visible(lv_obj_t *obj, bool visible)
-{
-    if (visible == lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
-        if (visible) {
-            lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-}
+void set_visible(lv_obj_t *obj, bool visible) { lv_obj_set_hidden(obj, !visible); }
 
 // Setting a style property always invalidates the object, even if the value is unchanged. These are
 // called on every UI update, and the seconds ring covers the whole screen, so only set real changes.
@@ -414,7 +405,7 @@ lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, co
     lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(l, text);
-    lv_obj_remove_flag(l, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_clickable(l, false);
     return l;
 }
 
@@ -422,7 +413,7 @@ lv_obj_t *make_arc(lv_obj_t *parent)
 {
     lv_obj_t *arc = lv_arc_create(parent);
     lv_obj_remove_style_all(arc);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_clickable(arc, false);
     lv_obj_center(arc);
     lv_arc_set_rotation(arc, 0);
     lv_arc_set_range(arc, 0, 1000);
@@ -1104,7 +1095,8 @@ void build_birthday_flags()
     for (auto &flag : s_flags) {
         flag.obj = lv_obj_create(s_view);
         lv_obj_remove_style_all(flag.obj);
-        lv_obj_remove_flag(flag.obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_clickable(flag.obj, false);
+        lv_obj_set_scrollable(flag.obj, false);
         lv_obj_set_size(flag.obj, FLAG_BOX_WIDTH, 80);
         lv_obj_set_pos(flag.obj, flag.x, 70);
         set_visible(flag.obj, false);
@@ -1181,21 +1173,24 @@ void build_idle()
 {
     s_timer_bg = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_timer_bg);
-    lv_obj_remove_flag(s_timer_bg, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(s_timer_bg, false);
+    lv_obj_set_scrollable(s_timer_bg, false);
     lv_obj_set_size(s_timer_bg, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_timer_bg, false);
     lv_obj_add_event_cb(s_timer_bg, draw_timer_bg, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_synth_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_synth_backdrop);
-    lv_obj_remove_flag(s_synth_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(s_synth_backdrop, false);
+    lv_obj_set_scrollable(s_synth_backdrop, false);
     lv_obj_set_size(s_synth_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_synth_backdrop, false);
     lv_obj_add_event_cb(s_synth_backdrop, draw_synth_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_flower_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_flower_backdrop);
-    lv_obj_remove_flag(s_flower_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(s_flower_backdrop, false);
+    lv_obj_set_scrollable(s_flower_backdrop, false);
     lv_obj_set_size(s_flower_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_flower_backdrop, false);
     lv_obj_add_event_cb(s_flower_backdrop, draw_flower_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
@@ -1207,21 +1202,24 @@ void build_idle()
 
     s_christmas_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_christmas_backdrop);
-    lv_obj_remove_flag(s_christmas_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(s_christmas_backdrop, false);
+    lv_obj_set_scrollable(s_christmas_backdrop, false);
     lv_obj_set_size(s_christmas_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_christmas_backdrop, false);
     lv_obj_add_event_cb(s_christmas_backdrop, draw_christmas_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_extra_backdrop = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_extra_backdrop);
-    lv_obj_remove_flag(s_extra_backdrop, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(s_extra_backdrop, false);
+    lv_obj_set_scrollable(s_extra_backdrop, false);
     lv_obj_set_size(s_extra_backdrop, LCD_WIDTH, LCD_HEIGHT);
     set_visible(s_extra_backdrop, false);
     lv_obj_add_event_cb(s_extra_backdrop, draw_extra_backdrop, LV_EVENT_DRAW_MAIN, nullptr);
 
     s_seconds_arc = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_seconds_arc);
-    lv_obj_remove_flag(s_seconds_arc, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_clickable(s_seconds_arc, false);
+    lv_obj_set_scrollable(s_seconds_arc, false);
     lv_obj_set_size(s_seconds_arc, RING_RADIUS * 2, RING_RADIUS * 2);
     lv_obj_center(s_seconds_arc);
     s_ring.track_color = lv_color_hex(0x1A1A1C);
@@ -1234,7 +1232,7 @@ void build_idle()
 
     s_gear = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_gear);
-    lv_obj_remove_flag(s_gear, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(s_gear, false);
     lv_obj_set_size(s_gear, GEAR_SIZE, GEAR_SIZE);
     lv_obj_set_pos(s_gear, GEAR_CX - GEAR_SIZE / 2, GEAR_CY - GEAR_SIZE / 2);
     lv_obj_set_style_radius(s_gear, LV_RADIUS_CIRCLE, 0);
@@ -1440,11 +1438,7 @@ void apply_idle(uint32_t now_ms, bool screensaver, ClockFace face, int second, b
     set_visible(s_date, visible);
     set_visible(s_hint, visible && hint_opa > LV_OPA_MIN);
     set_visible(s_gear, visible && hint_opa > LV_OPA_MIN);
-    if (hint_opa > LV_OPA_70 && s_core->count == 0) {
-        lv_obj_add_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
-    } else {
-        lv_obj_remove_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
-    }
+    lv_obj_set_clickable(s_gear, hint_opa > LV_OPA_70 && s_core->count == 0);
     set_visible(s_seconds_arc, !flower && visible && ring_alpha > LV_OPA_MIN);
 }
 
@@ -1678,8 +1672,8 @@ void create_card(int color)
     Card &c = s_cards[color];
     c.obj = lv_obj_create(s_view);
     lv_obj_remove_style_all(c.obj);
-    lv_obj_remove_flag(c.obj, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(c.obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_scrollable(c.obj, false);
+    lv_obj_set_hidden(c.obj, true);
     lv_obj_set_style_radius(c.obj, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(c.obj, lv_color_white(), LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(c.obj, 20, LV_STATE_PRESSED);
@@ -1695,13 +1689,14 @@ void create_card(int color)
     c.pressure = make_arc(c.obj);
     lv_arc_set_bg_angles(c.pressure, 0, 360);
     lv_obj_set_style_arc_opa(c.pressure, LV_OPA_TRANSP, LV_PART_INDICATOR);
-    lv_obj_add_flag(c.pressure, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(c.pressure, true);
     c.icon = brush_icon_create(c.obj);
-    lv_obj_add_flag(c.icon, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(c.icon, true);
     c.face = lv_obj_create(c.obj);
     lv_obj_remove_style_all(c.face);
-    lv_obj_remove_flag(c.face, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(c.face, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_clickable(c.face, false);
+    lv_obj_set_scrollable(c.face, false);
+    lv_obj_set_hidden(c.face, true);
     lv_obj_add_event_cb(c.face, draw_smiley, LV_EVENT_DRAW_MAIN, &c);
     c.cx = c.cy = c.r = -1;
     c.arc_w = 6;
@@ -1892,8 +1887,8 @@ void build_add_button()
 {
     s_add = lv_obj_create(s_view);
     lv_obj_remove_style_all(s_add);
-    lv_obj_remove_flag(s_add, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_add, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_scrollable(s_add, false);
+    lv_obj_set_hidden(s_add, true);
     lv_obj_set_style_radius(s_add, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_color(s_add, lv_color_hex(COLOR_OUTLINE), 0);
     lv_obj_add_event_cb(s_add, add_event_cb, LV_EVENT_CLICKED, nullptr);
@@ -1944,11 +1939,7 @@ void apply_add(uint32_t now_ms)
         style_add_button();
     }
     // Only tappable once it has (almost) fully appeared.
-    if (opa > LV_OPA_70) {
-        lv_obj_add_flag(s_add, LV_OBJ_FLAG_CLICKABLE);
-    } else {
-        lv_obj_remove_flag(s_add, LV_OBJ_FLAG_CLICKABLE);
-    }
+    lv_obj_set_clickable(s_add, opa > LV_OPA_70);
 }
 
 void on_layout_changed()
@@ -1959,11 +1950,7 @@ void on_layout_changed()
         s_add_ghost = l.add_is_ghost;
         style_add_button();
     }
-    if (s_core->count == 0) {
-        lv_obj_add_flag(s_view, LV_OBJ_FLAG_CLICKABLE);
-    } else {
-        lv_obj_remove_flag(s_view, LV_OBJ_FLAG_CLICKABLE);
-    }
+    lv_obj_set_clickable(s_view, s_core->count == 0);
 }
 
 // ---- Settings screen --------------------------------------------------------------------
@@ -2043,8 +2030,8 @@ lv_obj_t *make_button(lv_obj_t *parent, lv_coord_t w, lv_coord_t h, uint32_t bg,
 {
     lv_obj_t *btn = lv_obj_create(parent);
     lv_obj_remove_style_all(btn);
-    lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_scrollable(btn, false);
+    lv_obj_set_clickable(btn, true);
     lv_obj_set_size(btn, w, h);
     lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
@@ -2063,7 +2050,7 @@ void build_settings()
 {
     s_settings_scr = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(s_settings_scr, lv_color_black(), 0);
-    lv_obj_remove_flag(s_settings_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(s_settings_scr, false);
 
     s_set_title = make_label(s_settings_scr, &tb_font_20, COLOR_MUTED, "");
     lv_obj_align(s_set_title, LV_ALIGN_TOP_MID, 0, 48);
@@ -2145,11 +2132,12 @@ void ui_init(brush_core_t *core, uint32_t now_ms)
     s_main_scr = lv_screen_active();
     lv_obj_set_style_bg_color(s_main_scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_main_scr, LV_OPA_COVER, 0);
-    lv_obj_remove_flag(s_main_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(s_main_scr, false);
 
     s_view = lv_obj_create(s_main_scr);
     lv_obj_remove_style_all(s_view);
-    lv_obj_remove_flag(s_view, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_scrollable(s_view, false);
+    lv_obj_set_gesture_bubble(s_view, false);
     lv_obj_set_size(s_view, LCD_WIDTH, LCD_HEIGHT);
     for (lv_event_code_t code : {LV_EVENT_PRESSED, LV_EVENT_PRESSING, LV_EVENT_LONG_PRESSED, LV_EVENT_RELEASED}) {
         lv_obj_add_event_cb(s_view, idle_event_cb, code, nullptr);
@@ -2187,12 +2175,12 @@ void ui_update(uint32_t now_ms, const struct tm *local_time, uint16_t millis_in_
         apply_card_geometry(card, g);
         const int index = index_of_color(c);
         if (index >= 0) {
-            lv_obj_add_flag(card.obj, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_clickable(card.obj, true);
             if (card.opa > 0) {
                 update_card_content(card, index, now_ms, settings.count_up);
             }
         } else {
-            lv_obj_remove_flag(card.obj, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_clickable(card.obj, false);
         }
     }
     apply_add(now_ms);

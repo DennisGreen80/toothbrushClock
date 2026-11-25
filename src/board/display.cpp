@@ -160,7 +160,7 @@ bool rgb_panel_init()
     cfg.timings.vsync_front_porch = 8;
     cfg.timings.flags.pclk_active_neg = 0;
     cfg.data_width = 16;
-    cfg.bits_per_pixel = 16;
+    cfg.in_color_format = LCD_COLOR_FMT_RGB565; // frame buffer format; output defaults to the same
     cfg.num_fbs = 1;
     // Two bounce buffers of this size in internal RAM; the LCD DMA reads those while an ISR refills
     // them from the PSRAM frame buffer. Must divide the frame size (480 * 480 pixels).
